@@ -1,4 +1,4 @@
-/* Los Santos GPS v0.4 — browser PWA. Requires HTTPS for geolocation. */
+/* Los Santos GPS v0.6 — browser PWA. Requires HTTPS for geolocation. */
 const $=id=>document.getElementById(id);
 const state={map:null,position:null,heading:0,watch:null,destination:null,route:null,routeOptions:[],routeIndex:0,following:false,minimap:false,lastReroute:0};
 const msg=(s)=>{const e=$('toast');e.textContent=s;e.hidden=false;clearTimeout(msg.timer);msg.timer=setTimeout(()=>e.hidden=true,5200)};
@@ -45,39 +45,42 @@ async function enableCompass(){
  }catch(err){console.warn('Compass permission:',err);msg('Pusula izni alınamadı. Safari ayarlarından Hareket ve Yön erişimini kontrol et.');return false;}
 }
 
-function grayStyle(style){
- const s=JSON.parse(JSON.stringify(style));s.name='Los Santos GTA-inspired';
- // MapLibre receives an in-memory style, so resolve any relative asset URLs against the provider's style endpoint.
- const base='https://tiles.openfreemap.org/styles/liberty/';
- for(const key of ['sprite','glyphs'])if(typeof s[key]==='string')s[key]=new URL(s[key],base).href;
- for(const src of Object.values(s.sources||{})){if(typeof src.url==='string')src.url=new URL(src.url,base).href;if(Array.isArray(src.tiles))src.tiles=src.tiles.map(u=>new URL(u,base).href);}
- // Recolour paint expressions by layer semantics, retain correct geometry/source metadata.
- for(const layer of s.layers){const id=layer.id.toLowerCase();const type=layer.type;layer.paint??={};
-  if(type==='background')layer.paint['background-color']='#303033';
-  if(type==='fill'){
-    let c='#303033';
-    if(/building/.test(id))c='#232326';
-    else if(/water|ocean|lake|river/.test(id))c='#24272d';
-    else if(/park|grass|wood|forest|landcover|landuse/.test(id))c='#363739';
-    else if(/road|highway|street|bridge|tunnel/.test(id))c='#b0b0b0';
-    layer.paint['fill-color']=c;
-    if(layer.paint['fill-opacity']!==undefined)layer.paint['fill-opacity']=1;
+// Repaint the already-loaded working map; leave original sources and URLs untouched.
+// Per-layer exceptions are isolated so an unusual layer cannot blank the entire map.
+function applyGTATint(map){
+  const layers=map.getStyle()?.layers||[];
+  let done=0;
+  for(const layer of layers){
+    const id=layer.id.toLowerCase();
+    const src=(layer['source-layer']||'').toLowerCase();
+    const tag=id+' '+src;
+    const set=(k,v)=>{try{map.setPaintProperty(layer.id,k,v);done++;}catch(err){console.warn('Theme layer:',layer.id,k,err);}};
+    if(layer.type==='background'){set('background-color','#303033');continue;}
+    if(layer.type==='fill'){
+      if(/water|ocean|river|lake/.test(tag))set('fill-color','#232931');
+      else if(/building/.test(tag))set('fill-color','#242427');
+      else if(/park|forest|wood|grass|pitch|landcover|landuse|vegetation/.test(tag))set('fill-color','#38393b');
+      else if(/road|transport|bridge|tunnel/.test(tag))set('fill-color','#c7c6c5');
+      else set('fill-color','#303033');
+      if(layer.paint&&layer.paint['fill-pattern']!==undefined)set('fill-pattern',null);
+    } else if(layer.type==='line'){
+      if(/road|street|highway|transport|bridge|tunnel/.test(tag)){
+        const casing=/casing|outline|border/.test(tag);
+        const major=/motorway|trunk|primary|major/.test(tag);
+        set('line-color',casing?'#68696c':major?'#e0dfdd':'#c1c0bf');
+      }else if(/water|river|stream/.test(tag))set('line-color','#2b3139');
+      else if(/rail/.test(tag))set('line-color','#7d7d80');
+      else set('line-color','#5a5a5d');
+    }else if(layer.type==='symbol'){
+      if(/poi|airport|transit|housenumber/.test(tag)){
+        // Hide decorative labels and icons; retain district/street labels.
+        try{map.setLayoutProperty(layer.id,'visibility','none');}catch(_e){}
+      }else{
+        set('text-color','#e2e1e4');set('text-halo-color','#242428');set('text-halo-width',1.1);
+      }
+    }else if(layer.type==='fill-extrusion')set('fill-extrusion-color','#242427');
   }
-  if(type==='line'){
-    let c='#5c5b60';
-    if(/road|highway|street|bridge|tunnel|transport/.test(id))c=/motorway|trunk|primary/.test(id)?'#dfdddb':'#b6b5b4';
-    else if(/water/.test(id))c='#232832';
-    else if(/boundary/.test(id))c='#49494f';
-    layer.paint['line-color']=c;
-    if(layer.paint['line-opacity']!==undefined)layer.paint['line-opacity']=1;
-  }
-  if(type==='symbol'){
-    layer.paint['text-color']='#d8d6db';layer.paint['text-halo-color']='#27272b';layer.paint['text-halo-width']=1;
-    if(/poi|airport|transit/.test(id)){layer.layout??={};layer.layout.visibility='none';}
-  }
-  if(type==='fill-extrusion')layer.paint['fill-extrusion-color']='#232326';
- }
- return s;
+  console.info('GTA theme applied:',done,'paint properties');
 }
 async function start(){
   const status=$('status');
@@ -92,6 +95,7 @@ async function start(){
     let hasLoaded=false;
     state.map.on('load',()=>{
       hasLoaded=true;
+      try{applyGTATint(state.map);}catch(e){console.warn('GTA theme unavailable; basic map remains visible',e);}
       state.map.addSource('route',{type:'geojson',data:emptyGeo()});
       state.map.addLayer({id:'route-halo',type:'line',source:'route',paint:{'line-color':'#2a102e','line-width':12,'line-opacity':.95},layout:{'line-cap':'round','line-join':'round'}});
       state.map.addLayer({id:'route-main',type:'line',source:'route',paint:{'line-color':'#a957e9','line-width':7,'line-opacity':.94},layout:{'line-cap':'round','line-join':'round'}});
@@ -101,19 +105,7 @@ async function start(){
     state.map.on('error',e=>{console.error('Map error',e.error);if(!hasLoaded){status.textContent='HARİTA VERİ HATASI';msg('Harita sunucusuna erişilemiyor. Ağını kontrol edip sayfayı yenile.')}});
     setTimeout(()=>{if(!hasLoaded&&status.textContent==='HARİTA YÜKLENİYOR'){status.textContent='HARİTA SUNUCUSU YANIT VERMİYOR';msg('Harita yüklenmedi. Safari’de sayfayı yeniden yükle.')}},16000);
   };
-  try{
-    // Download style and apply GTA-like greys. A timeout avoids an infinite spinner.
-    const ctrl=new AbortController();
-    const timer=setTimeout(()=>ctrl.abort(),10000);
-    let res;
-    try{res=await fetch('https://tiles.openfreemap.org/styles/liberty',{signal:ctrl.signal,cache:'no-store'});}finally{clearTimeout(timer)}
-    if(!res.ok)throw Error(`Harita stil yanıtı: ${res.status}`);
-    initialize(styleURL); // Known working OpenFreeMap style; GTA colours will be restored separately.
-  }catch(e){
-    console.warn('Özel stil alınamadı, standart harita deneniyor:',e);
-    status.textContent='YEDEK HARİTA AÇILIYOR';
-    try{initialize('https://tiles.openfreemap.org/styles/liberty')}catch(err){console.error(err);status.textContent='HARİTA HATASI';msg('Harita yüklenemedi. Safari bağlantısını kontrol et.')}
-  }
+  try{initialize(styleURL);}catch(err){console.error(err);status.textContent='HARİTA HATASI';msg('Harita açılmadı. Safari sayfasını yenile.');}
 }
 
 function emptyGeo(){return{type:'FeatureCollection',features:[]}}
@@ -151,3 +143,55 @@ $('heading').onclick=async()=>{const ok=await enableCompass();if(!ok)return;stat
 $('followRoute').onclick=()=>{if(!state.route){msg('Önce geçerli bir rota oluştur.');return;}state.following=!state.following;$('followRoute').textContent=state.following?'■ NAVİGASYONU DURDUR':'▶ NAVİGASYONU BAŞLAT';if(state.following){if(state.watch===null)locate();state.map.easeTo({center:state.position||state.destination,bearing:currentHeading(),zoom:17,pitch:35});msg('Canlı navigasyon açık. Ekran kilitliyken web uygulaması durabilir.');}};
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.warn));
 start();
+
+
+/* v0.6 — two opt-in cinematic camera transitions. GPS and routes work as before. */
+const cinema={busy:false,mode:'light',auto:false,played:false};
+const delay=t=>new Promise(resolve=>setTimeout(resolve,t));
+function cinemaTarget(){return state.position||state.map?.getCenter()?.toArray()||[29.394,40.773];}
+function cameraStep(options){return new Promise(resolve=>{
+  if(!state.map){resolve();return;}
+  const duration=options.duration||700;
+  state.map.easeTo({...options,essential:true});
+  setTimeout(resolve,duration+90); // finite fallback even if animation interrupted
+});}
+async function playCinema(kind=cinema.mode){
+ if(cinema.busy||!state.map||!state.map.isStyleLoaded()){msg('Haritanın yüklenmesini bekle.');return;}
+ cinema.busy=true;cinema.mode=kind;
+ const scene=$('cinemaScene');scene.classList.remove('light','heavy','active','out');
+ scene.classList.add(kind,'active');document.body.classList.add('cinema-running');
+ $('cinemaPanel').hidden=true;
+ const target=cinemaTarget();
+ try{
+   if(kind==='light'){
+     await cameraStep({zoom:Math.max(9,Math.min(11,state.map.getZoom()-2.5)),pitch:0,duration:650});
+     await delay(210);
+     await cameraStep({center:target,zoom:16,pitch:28,bearing:state.following?currentHeading():0,duration:1350});
+   }else{
+     await cameraStep({zoom:7.5,pitch:0,bearing:0,duration:950});
+     await delay(390);
+     await cameraStep({center:target,zoom:11.5,pitch:12,duration:850});
+     await delay(180);
+     await cameraStep({center:target,zoom:16.5,pitch:48,bearing:state.following?currentHeading():0,duration:1450});
+   }
+ }finally{
+   scene.classList.add('out');
+   await delay(600);
+   scene.classList.remove('active','out','light','heavy');
+   document.body.classList.remove('cinema-running');cinema.busy=false;
+ }
+}
+$('cinemaMenu').onclick=()=>{$('cinemaPanel').hidden=!$('cinemaPanel').hidden;};
+$('cinemaClose').onclick=()=>{$('cinemaPanel').hidden=true;};
+function selectCinema(kind){cinema.mode=kind;$('cinemaSelection').textContent='Seçili: '+(kind==='light'?'Hafif Sinematik':'GTA Kamera');playCinema(kind);}
+$('cinemaLight').onclick=()=>selectCinema('light');
+$('cinemaHeavy').onclick=()=>selectCinema('heavy');
+$('cinemaAuto').onchange=e=>{cinema.auto=e.target.checked;cinema.played=false;};
+// The existing location button still starts geolocation. The camera effect is optional.
+$('locate').addEventListener('click',()=>{
+ if(cinema.auto&&!cinema.played){
+   cinema.played=true;
+   const waitForFix=()=>{if(state.position)playCinema(cinema.mode);else setTimeout(()=>{if(state.position)playCinema(cinema.mode);else msg('GPS konumu alındıktan sonra efekti EFEKTLER menüsünden başlatabilirsin.');},2400);};
+   setTimeout(waitForFix,550);
+ }
+});
