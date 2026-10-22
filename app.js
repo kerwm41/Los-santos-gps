@@ -134,7 +134,7 @@ function add3DBuildings(map){
     map.addLayer({id:'ls-3d-buildings',type:'fill-extrusion',source:base.source,'source-layer':base['source-layer'],minzoom:14.2,
       paint:{
         'fill-extrusion-color': document.body.classList.contains('day-theme') ? '#3f4045' : '#26272b',
-        'fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],['interpolate',['linear'],['zoom'],14,8,18,22]],
+        'fill-extrusion-height':['coalesce',['to-number',['get','render_height'],null],['to-number',['get','height'],null],18],
         'fill-extrusion-base':['coalesce',['get','render_min_height'],['get','min_height'],0],
         'fill-extrusion-opacity':['interpolate',['linear'],['zoom'],14.2,.75,17,.96]
       }
@@ -525,3 +525,59 @@ function refreshScene(){ loadNearbyPOIs(); loadRestrictedZones(); loadForestMark
 
 // Wait for asynchronous map startup without blocking map rendering.
 (function initDiscover(){let tries=0;const timer=setInterval(()=>{tries++;if(state.map?.isStyleLoaded()){clearInterval(timer);updateSeasonClass();applyDayNightTheme();state.map.on('moveend',refreshScene);state.map.on('zoomend',()=>{renderEnvironmentalEffects();refreshBuildingLights();loadLandmarks();loadForestMarkers();});state.map.on('rotate',renderEnvironmentalEffects);refreshScene();updateWeather().then(()=>{applyDayNightTheme();renderSkyBar();renderEnvironmentalEffects();refreshBuildingLights();});}else if(tries>35)clearInterval(timer);},700);})();
+
+/* v2.1: offline-service-independent vector tile fallback for visible points */
+let visibleFallbackId='', fallbackBusy=false;
+function visibleVectorSource(){
+ const m=state.map;if(!m)return null;
+ const ls=m.getStyle()?.layers||[];
+ const candidate=ls.find(l=>l['source-layer']==='poi')||ls.find(l=>l['source-layer']==='landcover');
+ return candidate?.source||null;
+}
+function collectTileFeatures(layer){
+ const src=visibleVectorSource();if(!src)return [];
+ try{return state.map.querySourceFeatures(src,{sourceLayer:layer})||[];}catch(e){return []}
+}
+function coordOfFeature(feature){
+ const g=feature?.geometry;if(!g)return null;
+ if(g.type==='Point')return g.coordinates;
+ if(g.type==='MultiPoint')return g.coordinates[0];
+ if(g.type==='Polygon') { const ring=g.coordinates[0]||[];return ring.length?[ring.reduce((a,p)=>a+p[0],0)/ring.length,ring.reduce((a,p)=>a+p[1],0)/ring.length]:null; }
+ if(g.type==='MultiPolygon') {const ring=g.coordinates[0]?.[0]||[];return ring.length?[ring.reduce((a,p)=>a+p[0],0)/ring.length,ring.reduce((a,p)=>a+p[1],0)/ring.length]:null;}
+ return null;
+}
+function visibleCoords(c){if(!c||!Number.isFinite(c[0])||!Number.isFinite(c[1]))return false;const b=state.map.getBounds();return b&&b.contains(c);}
+function poiTagsFromTile(p){const cls=p.class||p.subclass||'';const tag={name:p.name||p['name:latin']||'',amenity:cls,shop:cls,tourism:cls};
+ if(['pharmacy','hospital','clinic','doctors'].includes(cls))tag.amenity=cls;
+ else if(['restaurant','cafe','fast_food','school','university','library'].includes(cls))tag.amenity=cls;
+ else if(['supermarket','bakery','convenience'].includes(cls))tag.shop=cls;
+ else if(['castle','monument','memorial','museum','attraction'].includes(cls))tag.historic=cls;
+ else if(['mosque','place_of_worship'].includes(cls))tag.amenity='place_of_worship';
+ return tag;
+}
+function tilePoiCategory(p){ const tag=poiTagsFromTile(p);const cls=(p.class||p.subclass||'').toLowerCase();
+ if(['pharmacy','hospital','clinic','doctors','dentist','restaurant','cafe','fast_food','school','university','library','supermarket','bakery','convenience','museum','castle','monument','memorial','mosque','attraction'].includes(cls)||tag.historic)return tag;
+ return null;
+}
+function displayTileFallbacks(){
+ const m=state.map;if(!m||!m.isStyleLoaded())return;
+ const z=m.getZoom();if(z<12.5){clearPOIs();clearForestMarkers();clearLandmarks();return;}
+ const pitems=collectTileFeatures('poi'), keys=new Set();const poiNew=[],landNew=[];
+ for(const f of pitems){const c=coordOfFeature(f), p=f.properties||{};if(!visibleCoords(c))continue;const t=tilePoiCategory(p);if(!t)continue;
+  const key=`${Math.round(c[0]*1e5)},${Math.round(c[1]*1e5)},${p.name||''}`;if(keys.has(key))continue;keys.add(key);
+  const item={tags:t,lon:c[0],lat:c[1]};
+  const cls=String(p.class||p.subclass||'');const isLandmark=['castle','monument','memorial','mosque'].includes(cls);
+  if(isLandmark&&z>=14.5&&landNew.length<24){ const [kind]=landmarkKind(item);const el=landmarkElement(kind);el.title=t.name||'İkonik yapı';el.onclick=e=>{e.stopPropagation();showPOI(item)};landNew.push(new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat(c).addTo(m)); }
+  else if(poiNew.length<90){const el=document.createElement('button');el.className='poi-marker poi-'+poiClass(t)[2];el.textContent=poiClass(t)[0];el.title=t.name||cls;el.onclick=e=>{e.stopPropagation();showPOI(item)};poiNew.push(new maplibregl.Marker({element:el}).setLngLat(c).addTo(m));}
+ }
+ if(poiNew.length){clearPOIs();poiMarkers=poiNew;} if(landNew.length){clearLandmarks();landmarkMarkers=landNew;}
+ const woods=collectTileFeatures('landcover'),woods2=collectTileFeatures('landuse'),all=[...woods,...woods2];const seen=new Set(),treeNew=[];
+ if(z>=13.5)for(const f of all){const p=f.properties||{},tag=String(p.class||p.subclass||p.type||'');if(!/wood|forest|tree/.test(tag))continue;const c=coordOfFeature(f);if(!visibleCoords(c))continue;const key=c.map(x=>x.toFixed(4)).join(':');if(seen.has(key))continue;seen.add(key);const el=makeTreeCluster({id:Math.abs(Math.floor(c[0]*1e6+c[1]*1e5))},z);treeNew.push(new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat(c).addTo(m));if(treeNew.length>=45)break;}
+ if(treeNew.length){clearForestMarkers();forestMarkers=treeNew;}
+ renderEnvironmentalEffects();
+}
+// Avoid server requests for main visible categories; use currently loaded vector tiles.
+loadNearbyPOIs=()=>{displayTileFallbacks();};
+loadForestMarkers=()=>{};
+loadLandmarks=()=>{};
+if(state.map){state.map.on('idle',()=>{if(!fallbackBusy){fallbackBusy=true;try{displayTileFallbacks();}finally{fallbackBusy=false;}}});}
