@@ -50,3 +50,47 @@
 @keyframes weatherFall{from{translate:0 -12vh}to{translate:-14vw 130vh}}
 body.cinema-running .top,body.cinema-running .searchbox,body.cinema-running .tools,body.cinema-running .hud,body.cinema-running .routepanel,body.cinema-running .cinema-trigger,body.cinema-running .legal{opacity:0!important;pointer-events:none;transition:opacity .25s}
 @media(prefers-reduced-motion:reduce){.particle{animation:none!important;display:none}.cinema-scene .cloud{animation:none!important}}
+
+
+/* v0.9 automatic GTA camera + coastal water scene */
+#cinemaPanel,#cinemaMenu{display:none !important}
+.cinema-scene .water{position:absolute;inset:-16% -10%;opacity:0;transform:translate3d(0,12%,0) scale(1.1);pointer-events:none;mix-blend-mode:screen;will-change:transform,opacity;background:
+ radial-gradient(ellipse at 50% 76%, rgba(91,140,184,.34) 0%, rgba(78,131,170,.20) 20%, transparent 50%),
+ linear-gradient(180deg, transparent 0%, rgba(80,134,169,.08) 54%, rgba(135,182,215,.20) 72%, rgba(196,226,243,.34) 84%, transparent 100%);
+ filter: blur(10px) saturate(108%);
+}
+.cinema-scene .water-b{background:
+ linear-gradient(180deg, transparent 42%, rgba(181,214,236,.22) 68%, rgba(102,153,187,.16) 78%, transparent 96%),
+ radial-gradient(ellipse at 50% 88%, rgba(206,232,247,.24) 0%, transparent 34%);
+ filter: blur(16px);
+}
+.cinema-scene.coastal .water-a{animation:waterSweepA 4.8s ease-in-out both}
+.cinema-scene.coastal .water-b{animation:waterSweepB 4.8s ease-in-out both}
+@keyframes waterSweepA{
+  0%{opacity:0;transform:translate3d(0,20%,0) scale(1.35)}
+  24%{opacity:.04}
+  42%{opacity:.20;transform:translate3d(0,6%,0) scale(1.18)}
+  72%{opacity:.28;transform:translate3d(0,0,0) scale(1.05)}
+  100%{opacity:0;transform:translate3d(0,-6%,0) scale(1)}
+}
+@keyframes waterSweepB{
+  0%{opacity:0;transform:translate3d(0,18%,0) scale(1.25)}
+  38%{opacity:.08}
+  58%{opacity:.18}
+  86%{opacity:.26;transform:translate3d(0,0,0) scale(1.02)}
+  100%{opacity:0;transform:translate3d(0,-3%,0) scale(1)}
+}
+
+/* v1.0 in-map weather, transit and POI detail sheets */
+.quick-widgets{position:absolute;top:calc(env(safe-area-inset-top) + 120px);left:14px;z-index:6;display:flex;gap:8px;align-items:center}
+.mini-widget{display:flex;align-items:center;justify-content:center;gap:5px;min-width:45px;min-height:39px;padding:5px 10px;border:1px solid rgba(255,255,255,.075);border-radius:17px;background:rgba(24,28,33,.36);color:#f6f6f8;-webkit-backdrop-filter:blur(17px) saturate(120%);backdrop-filter:blur(17px) saturate(120%);box-shadow:0 3px 18px #0002;font-size:15px}
+.mini-widget b{font-size:13px;font-weight:650}
+.info-backdrop{position:fixed;inset:0;background:rgba(5,8,13,.15);z-index:18;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.info-backdrop[hidden],.info-sheet[hidden]{display:none!important}
+.info-sheet{position:fixed;left:10px;right:10px;bottom:max(10px,env(safe-area-inset-bottom));z-index:19;max-width:540px;max-height:67dvh;overflow:hidden;margin:0 auto;border:1px solid rgba(255,255,255,.12);border-radius:25px;background:rgba(26,31,38,.80);color:#f5f6f8;-webkit-backdrop-filter:blur(26px) saturate(135%);backdrop-filter:blur(26px) saturate(135%);box-shadow:0 18px 60px #0007;animation:sheetEnter .24s ease-out}
+@keyframes sheetEnter{from{transform:translateY(18px);opacity:0}to{transform:translateY(0);opacity:1}}
+.sheet-grab{height:4px;width:39px;border-radius:9px;background:#e6ebf16e;margin:9px auto 4px}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;padding:7px 17px 10px}.sheet-head strong{font-size:17px;letter-spacing:.1px}.sheet-head button{border:0;border-radius:50%;background:#ffffff16;color:white;width:32px;height:32px;font-size:19px}
+.sheet-content{padding:3px 17px 20px;overflow:auto;max-height:calc(67dvh - 70px);font-size:14px;line-height:1.5}.sheet-content p{margin:6px 0 13px;color:#e8ebf0ce}.sheet-content small,.sheet-muted{font-size:12px;color:#c7ccd5}.sheet-content h3{margin:15px 0 8px;font-size:13px}.sheet-list{display:grid;gap:11px}.sheet-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #ffffff15}.sheet-row>span:first-child{display:flex;align-items:center;gap:9px}.sheet-row strong{font-size:14px}.sheet-pill{display:inline-block;background:#ffffff13;border-radius:12px;padding:7px 9px;margin:4px 4px 4px 0}.sheet-action{border:0;border-radius:14px;padding:12px 14px;background:rgba(154,102,209,.60);color:white;font-weight:700;margin-top:10px;width:100%;font-size:13px}.sheet-link{color:#d2b5ff;text-decoration:underline;text-underline-offset:3px}.sheet-img{display:block;width:100%;max-height:190px;object-fit:cover;border-radius:13px;margin:9px 0}.poi-marker{width:24px;height:24px;border-radius:50%;border:1px solid #ffffff44;background:rgba(35,41,47,.83);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:grid;place-items:center;font-size:13px;box-shadow:0 2px 8px #0005;cursor:pointer}.poi-marker:active{transform:scale(.92)}
+body.cinema-running .quick-widgets{opacity:0;pointer-events:none}
+@media(max-width:380px){.quick-widgets{top:calc(env(safe-area-inset-top) + 114px)}.mini-widget{min-height:35px}}

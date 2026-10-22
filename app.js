@@ -82,6 +82,24 @@ function applyGTATint(map){
   }
   console.info('GTA theme applied:',done,'paint properties');
 }
+
+// Preserve street labels at high zoom; do not invent street names missing from source.
+function improveStreetLabels(map){
+ for(const layer of map.getStyle()?.layers||[]){
+  const tag=(layer.id+' '+(layer['source-layer']||'')).toLowerCase();
+  if(layer.type!=='symbol'||!/road|street|transport|highway/.test(tag)||!/label|name|text/.test(tag))continue;
+  try{
+   if(layer.layout?.['text-field']!==undefined){
+    if(layer.minzoom>15)map.setLayerZoomRange(layer.id,15,layer.maxzoom||24);
+    map.setPaintProperty(layer.id,'text-color','#e7e7ea');
+    map.setPaintProperty(layer.id,'text-halo-color','#222329');
+    map.setPaintProperty(layer.id,'text-halo-width',1.4);
+    map.setLayoutProperty(layer.id,'text-optional',true);
+   }
+  }catch(err){console.warn('Street label fallback',err);}
+ }
+}
+
 async function start(){
   const status=$('status');
   if(typeof window.maplibregl==='undefined'){
@@ -95,7 +113,7 @@ async function start(){
     let hasLoaded=false;
     state.map.on('load',()=>{
       hasLoaded=true;
-      try{applyGTATint(state.map);}catch(e){console.warn('GTA theme unavailable; basic map remains visible',e);}
+      try{applyGTATint(state.map);improveStreetLabels(state.map);}catch(e){console.warn('GTA theme unavailable; basic map remains visible',e);}
       state.map.addSource('route',{type:'geojson',data:emptyGeo()});
       state.map.addLayer({id:'route-halo',type:'line',source:'route',paint:{'line-color':'#2a102e','line-width':12,'line-opacity':.95},layout:{'line-cap':'round','line-join':'round'}});
       state.map.addLayer({id:'route-main',type:'line',source:'route',paint:{'line-color':'#a957e9','line-width':7,'line-opacity':.94},layout:{'line-cap':'round','line-join':'round'}});
@@ -120,6 +138,7 @@ function locate(){if(!navigator.geolocation){msg('Bu tarayıcıda GPS kullanıla
   if(!playerMarker){const el=document.createElement('div');el.className='player';playerMarker=new maplibregl.Marker({element:el,rotationAlignment:'map'}).setLngLat(pos).addTo(state.map);}else playerMarker.setLngLat(pos);
   if(playerMarker)updateMarkerHeading();
   if(state.following)state.map.easeTo({center:pos,zoom:state.minimap?17:16,bearing:currentHeading(),pitch:state.minimap?35:0,duration:650});
+  if(cinema.auto&&!cinema.played&&state.map?.isStyleLoaded()){cinema.played=true;setTimeout(()=>playCinema(cinema.mode),120);}
   if(state.destination&&!state.route)calculateRoute();
   if(state.route&&state.following)updateGuidance(pos);
  },err=>{console.error(err);$('status').textContent='GPS İZNİ GEREKLİ';msg('Konum alınamadı: Safari ayarlarında konum izni ver ve HTTPS kullan.');},{enableHighAccuracy:true,maximumAge:1500,timeout:16000});
@@ -146,7 +165,7 @@ start();
 
 
 /* v0.7 — two opt-in cinematic camera transitions. GPS and routes work as before. */
-const cinema={busy:false,mode:'light',auto:false,played:false,weather:'auto'};
+const cinema={busy:false,mode:'heavy',auto:true,played:false,weather:'auto',coastal:false};
 const delay=t=>new Promise(resolve=>setTimeout(resolve,t));
 function cinemaTarget(){return state.position||state.map?.getCenter()?.toArray()||[29.394,40.773];}
 function cameraStep(options){return new Promise(resolve=>{
@@ -196,7 +215,23 @@ function buildWeatherParticles(type){
  }
  parent.appendChild(frag);
 }
-$('weatherMode').addEventListener('change',e=>{cinema.weather=e.target.value;});
+const weatherSelect=$('weatherMode'); if(weatherSelect) weatherSelect.addEventListener('change',e=>{cinema.weather=e.target.value;});
+
+
+async function detectCoastalMood(target){
+ try{
+   if(!state.map||!target) return false;
+   const pt=state.map.project(target);
+   const box=[[pt.x-130,pt.y-130],[pt.x+130,pt.y+130]];
+   const feats=state.map.queryRenderedFeatures(box);
+   return feats.some(f=>{
+     const id=(f.layer&&f.layer.id||'').toLowerCase();
+     const src=(f.layer&&f.layer['source-layer']||'').toLowerCase();
+     const all=id+' '+src;
+     return /water|ocean|river|lake|sea|coast/.test(all);
+   });
+ }catch(err){console.warn('Coast detect fallback',err);return false;}
+}
 
 async function playCinema(kind=cinema.mode){
  if(cinema.busy||!state.map||!state.map.isStyleLoaded()){msg('Haritanın yüklenmesini bekle.');return;}
@@ -204,9 +239,13 @@ async function playCinema(kind=cinema.mode){
  cinema.busy=true;cinema.mode=kind;
  const scene=$('cinemaScene');scene.classList.remove('light','heavy','active','out');
  scene.classList.add(kind,'active');document.body.classList.add('cinema-running');
- const weather=await getWeather();scene.classList.remove('weather-rain','weather-snow','weather-clear','weather-cloud','weather-fog','weather-storm');scene.classList.add('weather-'+weather);buildWeatherParticles(weather);
- $('cinemaPanel').hidden=true;
+ const weather=await getWeather();
  const target=cinemaTarget();
+ cinema.coastal=await detectCoastalMood(target);
+ scene.classList.remove('weather-rain','weather-snow','weather-clear','weather-cloud','weather-fog','weather-storm','coastal');
+ scene.classList.add('weather-'+weather);
+ if(cinema.coastal) scene.classList.add('coastal');
+ buildWeatherParticles(weather);
  try{
    if(kind==='light'){
      await cameraStep({zoom:Math.max(9,Math.min(11,state.map.getZoom()-2.5)),pitch:0,duration:650});
@@ -222,21 +261,77 @@ async function playCinema(kind=cinema.mode){
  }finally{
    scene.classList.add('out');
    await delay(600);
-   scene.classList.remove('active','out','light','heavy','weather-rain','weather-snow','weather-clear','weather-cloud','weather-fog','weather-storm');$('weatherParticles').replaceChildren();
+   scene.classList.remove('active','out','light','heavy','weather-rain','weather-snow','weather-clear','weather-cloud','weather-fog','weather-storm','coastal');$('weatherParticles').replaceChildren();
    document.body.classList.remove('cinema-running');cinema.busy=false;
  }
 }
-$('cinemaMenu').onclick=()=>{$('cinemaPanel').hidden=!$('cinemaPanel').hidden;};
-$('cinemaClose').onclick=()=>{$('cinemaPanel').hidden=true;};
-function selectCinema(kind){cinema.mode=kind;$('cinemaSelection').textContent='Seçili: '+(kind==='light'?'Hafif Sinematik':'GTA Kamera');playCinema(kind);}
-$('cinemaLight').onclick=()=>selectCinema('light');
-$('cinemaHeavy').onclick=()=>selectCinema('heavy');
-$('cinemaAuto').onchange=e=>{cinema.auto=e.target.checked;cinema.played=false;};
-// The existing location button still starts geolocation. The camera effect is optional.
-$('locate').addEventListener('click',()=>{
- if(cinema.auto&&!cinema.played){
-   cinema.played=true;
-   const waitForFix=()=>{if(state.position)playCinema(cinema.mode);else setTimeout(()=>{if(state.position)playCinema(cinema.mode);else msg('GPS konumu alındıktan sonra efekti EFEKTLER menüsünden başlatabilirsin.');},2400);};
-   setTimeout(waitForFix,550);
- }
-});
+
+
+
+/* v1.0 — discreet weather, in-app details and nearby real OSM points. */
+const weatherState={data:null,updated:0,coordinate:null};
+let lastNearbyFetch=0, nearbyController=null, poiMarkers=[];
+const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function sheet(title,content){$('sheetTitle').textContent=title;$('sheetBody').innerHTML=content;$('infoBackdrop').hidden=false;$('infoSheet').hidden=false;}
+function closeSheet(){$('infoBackdrop').hidden=true;$('infoSheet').hidden=true;}
+$('sheetClose').onclick=closeSheet;$('infoBackdrop').onclick=closeSheet;
+function weatherSymbol(code,isDay=true){if([95,96,99].includes(code))return '⛈';if([71,73,75,77,85,86].includes(code))return '❄';if([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code))return '🌧';if([45,48].includes(code))return '🌫';if([1,2].includes(code))return isDay?'🌤':'☁';if(code===3)return '☁';return isDay?'☀':'☾';}
+async function updateWeather(force=false){
+ const p=state.position||state.map?.getCenter()?.toArray();if(!p)return null;
+ if(!force&&weatherState.data&&Date.now()-weatherState.updated<10*60*1000&&weatherState.coordinate&&distanceMeters(p,weatherState.coordinate)<10000)return weatherState.data;
+ try{
+  const [lon,lat]=p;const controller=new AbortController();const t=setTimeout(()=>controller.abort(),6000);
+  let resp;try{resp=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(5)}&longitude=${lon.toFixed(5)}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,cloud_cover,precipitation,wind_speed_10m,is_day&hourly=temperature_2m,precipitation_probability,weather_code&forecast_days=1&timezone=auto`,{signal:controller.signal});}finally{clearTimeout(t)}
+  if(!resp.ok)throw new Error('Weather HTTP '+resp.status);
+  const data=await resp.json();weatherState.data=data;weatherState.updated=Date.now();weatherState.coordinate=[...p];
+  $('weatherIcon').textContent=weatherSymbol(data.current?.weather_code,data.current?.is_day===1);$('weatherTemp').textContent=Math.round(data.current?.temperature_2m??0)+'°';return data;
+ }catch(e){console.warn('Weather unavailable',e);$('weatherTemp').textContent='—°';return weatherState.data;}
+}
+$('weatherChip').onclick=async()=>{
+ sheet('Hava durumu','<p>Güncel hava bilgileri yükleniyor…</p>');
+ const data=await updateWeather();if($('infoSheet').hidden||$('sheetTitle').textContent!=='Hava durumu')return;
+ if(!data){$('sheetBody').innerHTML='<p>Hava durumu verisi alınamadı. İnternetini kontrol edip tekrar deneyebilirsin.</p>';return;}
+ const w=data.current||{};const rows=[['Hissedilen',Math.round(w.apparent_temperature??0)+'°C'],['Nem',String(w.relative_humidity_2m??'—')+'%'],['Rüzgâr',String(w.wind_speed_10m??'—')+' km/sa'],['Bulutluluk',String(w.cloud_cover??'—')+'%'],['Yağış',String(w.precipitation??'—')+' mm']];
+ const hourly=data.hourly||{};const nowTime=data.current?.time||'';const first=(hourly.time||[]).findIndex(t=>t>=nowTime.slice(0,13)+':00');const start=Math.max(0,first);let hourlyHTML='';
+ for(let i=start;i<Math.min(start+5,(hourly.time||[]).length);i++){const hour=hourly.time[i].slice(11,16);hourlyHTML+=`<span class="sheet-pill">${hour} ${weatherSymbol(hourly.weather_code?.[i],true)} ${Math.round(hourly.temperature_2m?.[i]??0)}° · 🌧%${hourly.precipitation_probability?.[i]??'—'}</span>`;}
+ $('sheetBody').innerHTML=`<p style="font-size:24px">${weatherSymbol(w.weather_code,w.is_day===1)} ${Math.round(w.temperature_2m??0)}°C</p><div class="sheet-list">${rows.map(r=>`<div class="sheet-row"><span>${r[0]}</span><strong>${r[1]}</strong></div>`).join('')}</div><h3>Saatlik tahmin</h3>${hourlyHTML}<p class="sheet-muted">Kaynak: Open-Meteo · yaklaşık bölgesel tahmin</p>`;
+};
+$('travelChip').onclick=()=>{
+ const hasTarget=!!state.destination;let walking='—';if(hasTarget&&state.position){const metres=distanceMeters(state.position,state.destination);walking='≈ '+Math.max(1,Math.round(metres*1.3/83.33))+' dk*';}
+ const driving=state.route?fmtTime(state.route.duration):'—';
+ sheet('Ulaşım seçenekleri',`<p>${hasTarget?'Seçtiğin hedefe ulaşım karşılaştırması':'Önce haritada bir hedef seç veya adres ara.'}</p><div class="sheet-list">
+ <div class="sheet-row"><span>🚶 Yürüyerek</span><strong>${walking}</strong></div>
+ <div class="sheet-row"><span>🚗 Arabayla</span><strong>${driving}</strong></div>
+ <div class="sheet-row"><span>🚌 Otobüsle</span><strong>Sefer verisi yok</strong></div>
+ <div class="sheet-row"><span>🚆 Trenle</span><strong>Sefer verisi yok</strong></div></div>
+ <p class="sheet-muted">*Yürüyüş yalnızca kuş uçuşu uzaklıktan yaklaşık tahmindir, gerçek yürüme rotası değildir. Araç süresi OSRM rotasından gelir; canlı trafik içermez. Otobüs/tren için güvenilir tarife entegrasyonu henüz yok.</p>`);
+};
+function poiClass(tags){if(tags.historic||tags.tourism==='museum'||tags.tourism==='attraction'||tags.tourism==='viewpoint')return ['🏛','Tarihi / turistik yer'];if(tags.amenity==='restaurant')return ['🍽','Restoran'];if(tags.amenity==='cafe')return ['☕','Kafe'];if(tags.amenity==='pharmacy')return ['✚','Eczane'];if(tags.amenity==='hospital')return ['🏥','Hastane'];if(tags.amenity==='school')return ['🎓','Okul'];if(tags.shop)return ['🛒','Mağaza'];return ['📍','Mekân'];}
+async function showPOI(item){
+ const t=item.tags||{},name=t['name:tr']||t.name||'İsimsiz mekân',category=poiClass(t)[1];
+ const details=[t['addr:street'],t['addr:housenumber'],t['addr:city']].filter(Boolean).join(' ');
+ const links=[];if(t.website||t['contact:website']){let url=t.website||t['contact:website'];if(/^https?:\/\//i.test(url))links.push(`<a class="sheet-link" href="${escapeHTML(url)}" target="_blank" rel="noopener">Resmî site ↗</a>`);}
+ if(t.phone||t['contact:phone']){const phone=t.phone||t['contact:phone'];links.push(`<a class="sheet-link" href="tel:${escapeHTML(phone.replace(/[^+\d]/g,''))}">${escapeHTML(phone)}</a>`);}
+ let base=`<p class="sheet-muted">${escapeHTML(category)}</p>${details?`<p>${escapeHTML(details)}</p>`:''}${t.opening_hours?`<p>🕒 ${escapeHTML(t.opening_hours)}</p>`:''}${t.description?`<p>${escapeHTML(t.description)}</p>`:''}${links.length?`<p>${links.join(' · ')}</p>`:''}<p class="sheet-muted">OpenStreetMap topluluk verisi · bilgiler güncel olmayabilir.</p><button class="sheet-action" id="poiGo">📍 Buraya rota oluştur</button>`;
+ sheet(name,base);$('poiGo').onclick=()=>{setDestination(item.lon??item.center?.lon,item.lat??item.center?.lat,name);closeSheet();};
+ const wiki=t.wikipedia;if(!wiki||!/^([a-z-]+):(.+)$/.test(wiki))return;
+ const language=wiki.split(':')[0],title=wiki.slice(language.length+1);
+ if(!/^(tr|en|de|fr)$/.test(language))return;
+ try{const resp=await fetch(`https://${language}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g,'_'))}`);if(!resp.ok)return;const data=await resp.json();if($('infoSheet').hidden||$('sheetTitle').textContent!==name)return;
+  const img=data.thumbnail?.source?`<img class="sheet-img" src="${escapeHTML(data.thumbnail.source)}" alt="${escapeHTML(name)}">`:'';
+  const desc=data.extract?`<p>${escapeHTML(data.extract.slice(0,750))}</p>`:'';
+  $('sheetBody').insertAdjacentHTML('afterbegin',img+desc+'<p class="sheet-muted">Tarihî bilgi: Wikipedia</p>');
+ }catch(err){console.warn('Wikipedia info not available',err);}
+}
+function clearPOIs(){for(const m of poiMarkers)m.remove();poiMarkers=[];}
+async function loadNearbyPOIs(){
+ if(!state.map||state.map.getZoom()<13){clearPOIs();return;}
+ if(Date.now()-lastNearbyFetch<16000)return;lastNearbyFetch=Date.now();
+ const c=state.map.getCenter();if(nearbyController)nearbyController.abort();nearbyController=new AbortController();
+ const q=`[out:json][timeout:12];(nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[amenity~"^(restaurant|cafe|pharmacy|hospital|school)$"];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[historic];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[tourism~"^(museum|attraction|viewpoint)$"];);out center 65;`;
+ try{const resp=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',body:q,signal:nearbyController.signal});if(!resp.ok)throw Error('Overpass '+resp.status);const data=await resp.json();if(!state.map||state.map.getZoom()<13)return;clearPOIs();
+  for(const item of (data.elements||[]).slice(0,55)){const lng=item.lon??item.center?.lon,lat=item.lat??item.center?.lat;if(!Number.isFinite(lng)||!Number.isFinite(lat))continue;const el=document.createElement('button');el.className='poi-marker';const [icon,category]=poiClass(item.tags||{});el.textContent=icon;el.type='button';el.title=item.tags?.name||category;el.setAttribute('aria-label',el.title);el.onclick=e=>{e.stopPropagation();showPOI(item);};poiMarkers.push(new maplibregl.Marker({element:el,anchor:'center'}).setLngLat([lng,lat]).addTo(state.map));}
+ }catch(e){if(e.name!=='AbortError')console.warn('POI data temporarily unavailable',e);}
+}
+// Wait for asynchronous map startup without blocking map rendering.
+(function initDiscover(){let tries=0;const timer=setInterval(()=>{tries++;if(state.map?.isStyleLoaded()){clearInterval(timer);state.map.on('moveend',loadNearbyPOIs);loadNearbyPOIs();updateWeather();}else if(tries>35)clearInterval(timer);},700);})();
