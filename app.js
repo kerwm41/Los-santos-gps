@@ -6,7 +6,7 @@ const fmtDist=m=>m<1000?`${Math.round(m)} m`:`${(m/1000).toFixed(1)} km`;
 const fmtTime=s=>s<3600?`${Math.max(1,Math.round(s/60))} dk`:`${Math.floor(s/3600)} sa ${Math.round((s%3600)/60)} dk`;
 const styleURL='https://tiles.openfreemap.org/styles/liberty';
 function grayStyle(style){
- const s=structuredClone(style);s.name='Los Santos GTA-inspired';
+ const s=JSON.parse(JSON.stringify(style));s.name='Los Santos GTA-inspired';
  // MapLibre receives an in-memory style, so resolve any relative asset URLs against the provider's style endpoint.
  const base='https://tiles.openfreemap.org/styles/liberty/';
  for(const key of ['sprite','glyphs'])if(typeof s[key]==='string')s[key]=new URL(s[key],base).href;
@@ -40,15 +40,42 @@ function grayStyle(style){
  return s;
 }
 async function start(){
- try{
-  const res=await fetch(styleURL);if(!res.ok)throw Error('Harita stili alınamadı');const sty=grayStyle(await res.json());
-  state.map=new maplibregl.Map({container:'map',style:sty,center:[29.394,40.773],zoom:13,pitch:0,bearing:0,attributionControl:false});
-  state.map.addControl(new maplibregl.AttributionControl({compact:true}),'bottom-right');
-  state.map.on('load',()=>{state.map.addSource('route',{type:'geojson',data:emptyGeo()});state.map.addLayer({id:'route-halo',type:'line',source:'route',paint:{'line-color':'#2a102e','line-width':12,'line-opacity':.95},layout:{'line-cap':'round','line-join':'round'}});state.map.addLayer({id:'route-main',type:'line',source:'route',paint:{'line-color':'#a957e9','line-width':7,'line-opacity':.94},layout:{'line-cap':'round','line-join':'round'}});$('status').textContent='HEDEF SEÇ VEYA ARA';});
-  state.map.on('click',e=>{if(state.destination)return;setDestination(e.lngLat.lng,e.lngLat.lat,'Haritada seçilen hedef')});
-  state.map.on('error',e=>{console.error('Map error',e.error)});
- }catch(e){console.error(e);$('status').textContent='HARİTA HATASI';msg('Harita yüklenemedi. İnternet bağlantısını kontrol et.');}
+  const status=$('status');
+  if(typeof window.maplibregl==='undefined'){
+    status.textContent='HARİTA MOTORU YÜKLENEMEDİ';
+    msg('Harita kütüphanesi yüklenemedi. Safari’de sayfayı yenile veya başka ağ dene.');
+    return;
+  }
+  const initialize=(style)=>{
+    state.map=new maplibregl.Map({container:'map',style,center:[29.394,40.773],zoom:13,pitch:0,bearing:0,attributionControl:false});
+    state.map.addControl(new maplibregl.AttributionControl({compact:true}),'bottom-right');
+    let hasLoaded=false;
+    state.map.on('load',()=>{
+      hasLoaded=true;
+      state.map.addSource('route',{type:'geojson',data:emptyGeo()});
+      state.map.addLayer({id:'route-halo',type:'line',source:'route',paint:{'line-color':'#2a102e','line-width':12,'line-opacity':.95},layout:{'line-cap':'round','line-join':'round'}});
+      state.map.addLayer({id:'route-main',type:'line',source:'route',paint:{'line-color':'#a957e9','line-width':7,'line-opacity':.94},layout:{'line-cap':'round','line-join':'round'}});
+      status.textContent='HEDEF SEÇ VEYA ARA';
+    });
+    state.map.on('click',e=>{if(!state.destination)setDestination(e.lngLat.lng,e.lngLat.lat,'Haritada seçilen hedef')});
+    state.map.on('error',e=>{console.error('Map error',e.error);if(!hasLoaded){status.textContent='HARİTA VERİ HATASI';msg('Harita sunucusuna erişilemiyor. Ağını kontrol edip sayfayı yenile.')}});
+    setTimeout(()=>{if(!hasLoaded&&status.textContent==='HARİTA YÜKLENİYOR'){status.textContent='HARİTA SUNUCUSU YANIT VERMİYOR';msg('Harita yüklenmedi. Safari’de sayfayı yeniden yükle.')}},16000);
+  };
+  try{
+    // Download style and apply GTA-like greys. A timeout avoids an infinite spinner.
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),10000);
+    let res;
+    try{res=await fetch('https://tiles.openfreemap.org/styles/liberty',{signal:ctrl.signal,cache:'no-store'});}finally{clearTimeout(timer)}
+    if(!res.ok)throw Error(`Harita stil yanıtı: ${res.status}`);
+    initialize(grayStyle(await res.json()));
+  }catch(e){
+    console.warn('Özel stil alınamadı, standart harita deneniyor:',e);
+    status.textContent='YEDEK HARİTA AÇILIYOR';
+    try{initialize('https://tiles.openfreemap.org/styles/liberty')}catch(err){console.error(err);status.textContent='HARİTA HATASI';msg('Harita yüklenemedi. Safari bağlantısını kontrol et.')}
+  }
 }
+
 function emptyGeo(){return{type:'FeatureCollection',features:[]}}
 let playerMarker=null,destMarker=null;
 function locate(){if(!navigator.geolocation){msg('Bu tarayıcıda GPS kullanılamıyor.');return;}
