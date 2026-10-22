@@ -145,8 +145,8 @@ if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.ser
 start();
 
 
-/* v0.6 — two opt-in cinematic camera transitions. GPS and routes work as before. */
-const cinema={busy:false,mode:'light',auto:false,played:false};
+/* v0.7 — two opt-in cinematic camera transitions. GPS and routes work as before. */
+const cinema={busy:false,mode:'light',auto:false,played:false,weather:'auto'};
 const delay=t=>new Promise(resolve=>setTimeout(resolve,t));
 function cinemaTarget(){return state.position||state.map?.getCenter()?.toArray()||[29.394,40.773];}
 function cameraStep(options){return new Promise(resolve=>{
@@ -155,29 +155,74 @@ function cameraStep(options){return new Promise(resolve=>{
   state.map.easeTo({...options,essential:true});
   setTimeout(resolve,duration+90); // finite fallback even if animation interrupted
 });}
+
+// Real weather uses current GPS coordinates; graceful fallback if permission or service fails.
+let latestWeather={at:0,key:'',type:'cloud'};
+function weatherKind(code,clouds=0){
+ if([95,96,99].includes(code))return 'storm';
+ if([71,73,75,77,85,86].includes(code))return 'snow';
+ if([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code))return 'rain';
+ if([45,48].includes(code))return 'fog';
+ return clouds>=70?'cloud':clouds>=30?'cloud':'clear';
+}
+async function getWeather(){
+ if(cinema.weather!=='auto')return cinema.weather;
+ if(!state.position)return 'cloud';
+ const key=state.position.map(v=>v.toFixed(2)).join(',');
+ if(latestWeather.key===key&&Date.now()-latestWeather.at<600000)return latestWeather.type;
+ const [lon,lat]=state.position;
+ const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),3300);
+ try{
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=weather_code,cloud_cover&timezone=auto`;
+  const res=await fetch(url,{signal:controller.signal});if(!res.ok)throw Error('Weather unavailable');
+  const data=await res.json();const type=weatherKind(data.current?.weather_code,data.current?.cloud_cover);
+  latestWeather={key,at:Date.now(),type};return type;
+ }catch(err){console.warn('Weather fallback:',err);return 'cloud';}finally{clearTimeout(timeout)}
+}
+function buildWeatherParticles(type){
+ const parent=$('weatherParticles');parent.replaceChildren();
+ if(!['rain','storm','snow'].includes(type))return;
+ const count=type==='snow'?35:type==='storm'?62:42;
+ const frag=document.createDocumentFragment();
+ for(let i=0;i<count;i++){
+  const part=document.createElement('i');part.className='particle';
+  const rand=n=>((Math.sin(i*93.17+n*21.8)*43758.5453)%1+1)%1;
+  const isSnow=type==='snow';
+  part.style.setProperty('--x',`${rand(1)*105}%`);part.style.setProperty('--w',`${isSnow?2+rand(2)*5:1}px`);
+  part.style.setProperty('--h',`${isSnow?2+rand(3)*5:12+rand(3)*26}px`);
+  part.style.setProperty('--a',`${.2+rand(4)*.65}`);
+  part.style.setProperty('--d',`${isSnow?3+rand(5)*3:.55+rand(5)*.7}s`);
+  part.style.setProperty('--delay',`${-rand(6)*5}s`);frag.appendChild(part);
+ }
+ parent.appendChild(frag);
+}
+$('weatherMode').addEventListener('change',e=>{cinema.weather=e.target.value;});
+
 async function playCinema(kind=cinema.mode){
  if(cinema.busy||!state.map||!state.map.isStyleLoaded()){msg('Haritanın yüklenmesini bekle.');return;}
+ if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){state.map.easeTo({center:cinemaTarget(),zoom:16,duration:250});return;}
  cinema.busy=true;cinema.mode=kind;
  const scene=$('cinemaScene');scene.classList.remove('light','heavy','active','out');
  scene.classList.add(kind,'active');document.body.classList.add('cinema-running');
+ const weather=await getWeather();scene.classList.remove('weather-rain','weather-snow','weather-clear','weather-cloud','weather-fog','weather-storm');scene.classList.add('weather-'+weather);buildWeatherParticles(weather);
  $('cinemaPanel').hidden=true;
  const target=cinemaTarget();
  try{
    if(kind==='light'){
      await cameraStep({zoom:Math.max(9,Math.min(11,state.map.getZoom()-2.5)),pitch:0,duration:650});
      await delay(210);
-     await cameraStep({center:target,zoom:16,pitch:28,bearing:state.following?currentHeading():0,duration:1350});
+     await cameraStep({center:target,zoom:16,pitch:28,bearing:state.following?currentHeading():0,duration:1450});
    }else{
      await cameraStep({zoom:7.5,pitch:0,bearing:0,duration:950});
      await delay(390);
      await cameraStep({center:target,zoom:11.5,pitch:12,duration:850});
      await delay(180);
-     await cameraStep({center:target,zoom:16.5,pitch:48,bearing:state.following?currentHeading():0,duration:1450});
+     await cameraStep({center:target,zoom:16.5,pitch:48,bearing:state.following?currentHeading():0,duration:1580});
    }
  }finally{
    scene.classList.add('out');
    await delay(600);
-   scene.classList.remove('active','out','light','heavy');
+   scene.classList.remove('active','out','light','heavy','weather-rain','weather-snow','weather-clear','weather-cloud','weather-fog','weather-storm');$('weatherParticles').replaceChildren();
    document.body.classList.remove('cinema-running');cinema.busy=false;
  }
 }

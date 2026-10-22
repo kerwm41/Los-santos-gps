@@ -10,3 +10,43 @@
 @keyframes flashheavy{0%,32%,56%,100%{opacity:0}43%{opacity:.14}65%{opacity:.07}}
 @keyframes titleheavy{0%,30%,78%,100%{opacity:0}45%,66%{opacity:.92}}
 @media(prefers-reduced-motion:reduce){.cloud,.cinema-flash,.cinema-title{animation-duration:.15s!important} .cinema-scene{transition-duration:.1s!important}}
+
+/* v0.7: textured semitransparent cloud banks with three-layer parallax. */
+.cinema-scene{isolation:isolate;}
+.cloud{inset:-24%;background-image:url('./cloud-1.webp');background-position:center;background-repeat:no-repeat;background-size:cover;filter:blur(5px);mix-blend-mode:screen;}
+.cloud-b{background-image:url('./cloud-2.webp');filter:blur(9px);mix-blend-mode:screen;}
+.cloud-c{background-image:url('./cloud-3.webp');filter:blur(13px);mix-blend-mode:screen;}
+.cinema-scene.light .cloud-a{animation:cloudNaturalLight 2.7s cubic-bezier(.3,.05,.4,1) both;}
+.cinema-scene.light .cloud-b{animation:cloudNaturalLightB 2.7s cubic-bezier(.3,.05,.4,1) both;}
+.cinema-scene.heavy .cloud-a{animation:cloudNaturalHeavy 4.8s cubic-bezier(.18,.1,.32,1) both;}
+.cinema-scene.heavy .cloud-b{animation:cloudNaturalHeavyB 4.8s cubic-bezier(.18,.1,.32,1) both;}
+.cinema-scene.heavy .cloud-c{animation:cloudNaturalHeavyC 4.8s cubic-bezier(.18,.1,.32,1) both;}
+.cinema-scene.heavy .cinema-flash{animation:flashheavy 4.8s ease-in-out both;opacity:0;background:#bcc5d033;}
+.cinema-scene.heavy .cinema-title{animation:titleheavy 4.8s ease both;}
+@keyframes cloudNaturalLight{0%{opacity:0;transform:translate(-18%,7%) scale(1.25)}35%{opacity:.58}62%{opacity:.47}100%{opacity:0;transform:translate(13%,-8%) scale(1.58)}}
+@keyframes cloudNaturalLightB{0%{opacity:0;transform:translate(13%,-12%) scale(1.55)}32%{opacity:.32}63%{opacity:.38}100%{opacity:0;transform:translate(-13%,12%) scale(1.15)}}
+@keyframes cloudNaturalHeavy{0%{opacity:0;transform:translate(-22%,11%) scale(1.06)}29%{opacity:.92}51%{opacity:.8}79%{opacity:.45}100%{opacity:0;transform:translate(18%,-18%) scale(1.95)}}
+@keyframes cloudNaturalHeavyB{0%{opacity:0;transform:translate(20%,-13%) scale(1.42)}20%{opacity:.45}43%{opacity:.95}65%{opacity:.77}100%{opacity:0;transform:translate(-17%,14%) scale(1.15)}}
+@keyframes cloudNaturalHeavyC{0%{opacity:0;transform:translate(-4%,25%) scale(1.1)}31%{opacity:.25}53%{opacity:.66}83%{opacity:.42}100%{opacity:0;transform:translate(5%,-23%) scale(1.85)}}
+@media(prefers-reduced-motion:reduce){.cinema-scene .cloud{animation:none!important;opacity:0!important}.cinema-scene .cinema-flash,.cinema-scene .cinema-title{animation:none!important}}
+
+/* v0.8 — quiet, borderless translucent glass; opaque boxes are avoided. */
+:root{--glass:rgba(20,24,31,.22);--glass-strong:rgba(18,22,30,.37);--glass-highlight:rgba(255,255,255,.075)}
+.top{padding-bottom:25px;background:linear-gradient(180deg,rgba(12,15,21,.55),rgba(12,15,21,.2) 48%,transparent);pointer-events:none}
+.top>*{pointer-events:auto}.brand .star{color:#e8e9ef;font-size:17px}.brand b{font-size:13px;letter-spacing:2.1px;font-weight:650}.brand small{opacity:.58;letter-spacing:1.3px}.brand .ver{color:inherit}
+.chip,.searchbox form,.tools button,.routepanel,.cinema-trigger{background:var(--glass)!important;border:1px solid var(--glass-highlight)!important;box-shadow:0 8px 25px rgba(5,8,15,.09),inset 0 1px rgba(255,255,255,.045)!important;-webkit-backdrop-filter:blur(13px) saturate(117%)!important;backdrop-filter:blur(13px) saturate(117%)!important}
+.chip{border-radius:24px;font-weight:600;font-size:10px;padding:10px 12px}.searchbox form{border-radius:24px;height:46px}.searchbox form button{background:transparent;color:#e5d9f0;font-weight:700;border-left:1px solid rgba(255,255,255,.07);padding:0 16px}.loupe{font-size:24px;color:#f1f1f1;opacity:.68}.searchbox input{font-size:14px}
+.tools{gap:12px}.tools button{border-radius:50%;width:46px;height:46px;font-size:24px;font-weight:400}
+.routepanel{border-radius:22px}.routeinfo .modeTag{background:rgba(255,255,255,.09);border-radius:9px}.primary{border-radius:13px;background:rgba(142,94,183,.6);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.hud{background:linear-gradient(0deg,rgba(9,12,17,.6),rgba(9,12,17,.28) 48%,transparent 100%);padding-top:38px}.compass>span:first-child{border:1px solid rgba(255,255,255,.36);background:rgba(10,12,17,.16)}.progress{height:4px;background:rgba(255,255,255,.12);border:0;border-radius:5px;box-shadow:none;overflow:hidden}.progressbar{background:#a7c5bd}.routebar{background:#987ba8}.vignette{background:radial-gradient(ellipse at 50% 48%,transparent 55%,rgba(8,10,14,.34) 100%)}
+.cinema-trigger{border-radius:26px;padding:10px 13px;letter-spacing:.4px;font-size:11px}.cinema-panel{background:rgba(20,23,30,.53);border:1px solid rgba(255,255,255,.09);-webkit-backdrop-filter:blur(24px) saturate(115%);backdrop-filter:blur(24px) saturate(115%);box-shadow:0 15px 46px rgba(0,0,0,.16);border-radius:25px}.cinema-choice{border:1px solid rgba(255,255,255,.055);background:rgba(255,255,255,.065);border-radius:18px}.cinema-choice:active{background:rgba(255,255,255,.16)}.cinema-scene{contain:layout paint}.cinema-title{display:none!important}
+.weather-selector{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#e7e5ea;font-size:12px;padding:12px 0 2px}.weather-selector select{max-width:185px;color:#f8f6fc;background:rgba(255,255,255,.13);padding:9px;border:1px solid rgba(255,255,255,.12);border-radius:12px;font:inherit}
+.weather-particles{position:absolute;inset:0;overflow:hidden;opacity:0;transition:opacity .35s;contain:paint}.cinema-scene.active .weather-particles{opacity:1}.particle{position:absolute;top:-18%;left:var(--x);width:var(--w);height:var(--h);opacity:var(--a);background:rgba(224,235,249,.7);border-radius:9px;transform:translate3d(0,0,0);animation:weatherFall var(--d) linear infinite;animation-delay:var(--delay)}
+.cinema-scene.weather-rain .particle,.cinema-scene.weather-storm .particle{width:1px;height:var(--h);background:linear-gradient(transparent,rgba(218,228,241,.75));transform:rotate(14deg)}
+.cinema-scene.weather-snow .particle{border-radius:50%;background:rgba(246,248,255,.89);filter:blur(.4px)}
+.cinema-scene.weather-clear .cloud{opacity:0!important}.cinema-scene.weather-clear .cloud-a{opacity:.18!important}
+.cinema-scene.weather-cloud .cloud,.cinema-scene.weather-fog .cloud{filter:blur(16px)}
+.cinema-scene.weather-fog .cloud{opacity:.45!important}.cinema-scene.weather-storm{background:rgba(17,24,36,.15)}
+@keyframes weatherFall{from{translate:0 -12vh}to{translate:-14vw 130vh}}
+body.cinema-running .top,body.cinema-running .searchbox,body.cinema-running .tools,body.cinema-running .hud,body.cinema-running .routepanel,body.cinema-running .cinema-trigger,body.cinema-running .legal{opacity:0!important;pointer-events:none;transition:opacity .25s}
+@media(prefers-reduced-motion:reduce){.particle{animation:none!important;display:none}.cinema-scene .cloud{animation:none!important}}
