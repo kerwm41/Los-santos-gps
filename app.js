@@ -1,6 +1,6 @@
-/* Los Santos GPS v0.6 — browser PWA. Requires HTTPS for geolocation. */
+/* Los Santos GPS v2.0 — browser PWA. Requires HTTPS for geolocation. */
 const $=id=>document.getElementById(id);
-const state={map:null,position:null,heading:0,watch:null,destination:null,route:null,routeOptions:[],routeIndex:0,following:false,minimap:false,lastReroute:0,pendingCinema:false};
+const state={map:null,position:null,heading:0,watch:null,destination:null,route:null,routeOptions:[],routeIndex:0,following:false,minimap:false,lastReroute:0,pendingCinema:false,activeWeather:'clear'};
 const msg=(s)=>{const e=$('toast');e.textContent=s;e.hidden=false;clearTimeout(msg.timer);msg.timer=setTimeout(()=>e.hidden=true,5200)};
 const fmtDist=m=>m<1000?`${Math.round(m)} m`:`${(m/1000).toFixed(1)} km`;
 const fmtTime=s=>s<3600?`${Math.max(1,Math.round(s/60))} dk`:`${Math.floor(s/3600)} sa ${Math.round((s%3600)/60)} dk`;
@@ -12,7 +12,10 @@ function applyDayNightTheme(dayFlag=null){
   const isDay = dayFlag!==null ? !!dayFlag : ((weatherState.data?.current?.is_day===1) || ((new Date()).getHours()>=7 && (new Date()).getHours()<20));
   document.body.classList.toggle('day-theme',isDay);
   document.body.classList.toggle('night-theme',!isDay);
+  if(state.map&&state.map.getLayer('ls-3d-buildings')){try{state.map.setPaintProperty('ls-3d-buildings','fill-extrusion-color',isDay?'#3f4045':'#26272b');}catch(_){}}
 }
+function currentSeason(date=new Date()){const m=date.getMonth()+1;return m===12||m<=2?'winter':m<=5?'spring':m<=8?'summer':'autumn';}
+function updateSeasonClass(){const s=currentSeason();document.body.classList.remove('season-winter','season-spring','season-summer','season-autumn');document.body.classList.add('season-'+s);return s;}
 function updateMarkerHeading(){if(playerMarker)playerMarker.setRotation(currentHeading());}
 function handleOrientation(e){
   let h=null;
@@ -106,19 +109,40 @@ function improveStreetLabels(map){
 }
 
 // Vector road labels: OpenMapTiles transportation_name includes street names not present in the default visible layers.
+
 function addLocalStreetNames(map){
-  const style=map.getStyle();if(!style||map.getLayer('local-street-names'))return;
-  const road=style.layers.find(l=>l['source-layer']==='transportation_name');
-  const source=road?.source||style.layers.find(l=>l['source-layer']==='transportation')?.source;
-  if(!source)return;
+  const style=map.getStyle(); if(!style) return;
+  const source=(style.layers.find(l=>l['source-layer']==='transportation_name')||style.layers.find(l=>/transportation/.test(l['source-layer']||'')))?.source;
+  if(!source) return;
+  const add=(id,layout,paint,flt)=>{ if(map.getLayer(id)) return; try{ map.addLayer({id,type:'symbol',source,'source-layer':'transportation_name',minzoom:13.2,filter:flt||['has','name'],layout,paint}); }catch(err){ console.warn('Street layer',id,err);} };
+  add('ls-street-names-line',{
+    'symbol-placement':'line','symbol-spacing':220,'text-field':['coalesce',['get','name:tr'],['get','name']],
+    'text-font':['Noto Sans Regular'],'text-size':['interpolate',['linear'],['zoom'],13.2,10,15,12,18,15],
+    'text-max-angle':35,'text-rotation-alignment':'map','text-allow-overlap':false,'text-ignore-placement':false
+  },{'text-color':'#f1f2f6','text-halo-color':'#1a1c22','text-halo-width':2,'text-opacity':['interpolate',['linear'],['zoom'],13.2,.55,15,.98]},['has','name']);
+  add('ls-street-names-point',{
+    'symbol-placement':'point','text-field':['coalesce',['get','name:tr'],['get','name']],'text-font':['Noto Sans Regular'],
+    'text-size':['interpolate',['linear'],['zoom'],14,10,17,12],'text-allow-overlap':false,'text-ignore-placement':false
+  },{'text-color':'#f4f4f6','text-halo-color':'#1a1c22','text-halo-width':2,'text-opacity':['interpolate',['linear'],['zoom'],14,0,15.2,.75,17,.92]},['has','name']);
+}
+function add3DBuildings(map){
+  if(map.getLayer('ls-3d-buildings')) return;
+  const layers=map.getStyle()?.layers||[];
+  const base=layers.find(l=>/building/.test(((l['source-layer']||'')+' '+l.id).toLowerCase()) && ['fill','line'].includes(l.type));
+  if(!base) return;
   try{
-    map.addLayer({id:'local-street-names',type:'symbol',source,'source-layer':'transportation_name',minzoom:14,
-      filter:['all',['has','name'],['any',['==',['get','class'],'minor'],['==',['get','class'],'service'],['==',['get','class'],'street'],['==',['get','class'],'tertiary'],['==',['get','class'],'residential'],['==',['get','class'],'path'],['==',['get','class'],'secondary'],['==',['get','class'],'primary']]],
-      layout:{'symbol-placement':'line','symbol-spacing':180,'text-field':['coalesce',['get','name:tr'],['get','name']], 'text-font':['Noto Sans Regular'], 'text-size':['interpolate',['linear'],['zoom'],14,10,17,13,20,15], 'text-max-angle':35,'text-rotation-alignment':'map','text-allow-overlap':false,'text-ignore-placement':false},
-      paint:{'text-color':'#f4f4f6','text-halo-color':'#1a1c23','text-halo-width':1.8,'text-opacity':['interpolate',['linear'],['zoom'],14,0.72,16,1]}});
-  }catch(e){console.warn('Street label source unavailable',e)}
+    map.addLayer({id:'ls-3d-buildings',type:'fill-extrusion',source:base.source,'source-layer':base['source-layer'],minzoom:14.2,
+      paint:{
+        'fill-extrusion-color': document.body.classList.contains('day-theme') ? '#3f4045' : '#26272b',
+        'fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],['interpolate',['linear'],['zoom'],14,8,18,22]],
+        'fill-extrusion-base':['coalesce',['get','render_min_height'],['get','min_height'],0],
+        'fill-extrusion-opacity':['interpolate',['linear'],['zoom'],14.2,.75,17,.96]
+      }
+    });
+  }catch(err){console.warn('3D buildings unavailable',err);}
 }
 async function start(){
+
   const status=$('status');
   if(typeof window.maplibregl==='undefined'){
     status.textContent='HARİTA MOTORU YÜKLENEMEDİ';
@@ -126,13 +150,14 @@ async function start(){
     return;
   }
   const initialize=(style)=>{
-    state.map=new maplibregl.Map({container:'map',style,center:[29.394,40.773],zoom:13,pitch:0,bearing:0,attributionControl:false});
+    state.map=new maplibregl.Map({container:'map',style,center:[29.394,40.773],zoom:13,pitch:0,bearing:0,attributionControl:false,dragRotate:true,pitchWithRotate:true,touchPitch:true});
     state.map.addControl(new maplibregl.AttributionControl({compact:true}),'bottom-right');
     let hasLoaded=false;
     state.map.on('load',()=>{
       hasLoaded=true;
-      try{applyGTATint(state.map);improveStreetLabels(state.map);addLocalStreetNames(state.map);addWaterDepthBands(state.map);}catch(e){console.warn('GTA theme unavailable; basic map remains visible',e);}
+      try{applyGTATint(state.map);improveStreetLabels(state.map);addLocalStreetNames(state.map);addWaterDepthBands(state.map);add3DBuildings(state.map);}catch(e){console.warn('GTA theme unavailable; basic map remains visible',e);}
       ensureZoneLayers(state.map);
+      try{state.map.dragRotate.enable();state.map.touchZoomRotate.enableRotation();state.map.touchPitch.enable();}catch(_){ }
       state.map.addSource('route',{type:'geojson',data:emptyGeo()});
       state.map.addLayer({id:'route-halo',type:'line',source:'route',paint:{'line-color':'#2a102e','line-width':12,'line-opacity':.95},layout:{'line-cap':'round','line-join':'round'}});
       state.map.addLayer({id:'route-main',type:'line',source:'route',paint:{'line-color':'#a957e9','line-width':7,'line-opacity':.94},layout:{'line-cap':'round','line-join':'round'}});
@@ -300,10 +325,12 @@ async function updateWeather(force=false){
  if(!force&&weatherState.data&&Date.now()-weatherState.updated<10*60*1000&&weatherState.coordinate&&distanceMeters(p,weatherState.coordinate)<10000)return weatherState.data;
  try{
   const [lon,lat]=p;const controller=new AbortController();const t=setTimeout(()=>controller.abort(),6000);
-  let resp;try{resp=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(5)}&longitude=${lon.toFixed(5)}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,cloud_cover,precipitation,wind_speed_10m,is_day&hourly=temperature_2m,precipitation_probability,weather_code&forecast_days=1&timezone=auto`,{signal:controller.signal});}finally{clearTimeout(t)}
+  let resp;try{resp=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(5)}&longitude=${lon.toFixed(5)}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,cloud_cover,precipitation,wind_speed_10m,is_day&hourly=temperature_2m,precipitation_probability,weather_code&daily=sunrise,sunset&forecast_days=1&timezone=auto`,{signal:controller.signal});}finally{clearTimeout(t)}
   if(!resp.ok)throw new Error('Weather HTTP '+resp.status);
   const data=await resp.json();weatherState.data=data;weatherState.updated=Date.now();weatherState.coordinate=[...p];
-  $('weatherIcon').textContent=weatherSymbol(data.current?.weather_code,data.current?.is_day===1);$('weatherTemp').textContent=Math.round(data.current?.temperature_2m??0)+'°';applyDayNightTheme(data.current?.is_day===1);return data;
+  $('weatherIcon').textContent=weatherSymbol(data.current?.weather_code,data.current?.is_day===1);$('weatherTemp').textContent=Math.round(data.current?.temperature_2m??0)+'°';
+  state.activeWeather=weatherKind(data.current?.weather_code,data.current?.cloud_cover);
+  applyDayNightTheme(data.current?.is_day===1); updateSeasonClass(); renderSkyBar(data); renderEnvironmentalEffects(); refreshBuildingLights(); return data;
  }catch(e){console.warn('Weather unavailable',e);$('weatherTemp').textContent='—°';return weatherState.data;}
 }
 $('weatherChip').onclick=async()=>{
@@ -345,6 +372,7 @@ function statusHours(raw){
  if(raw==='24/7')return '24 saat açık';
  return 'Çalışma saatleri: '+raw;
 }
+function openingState(raw){ if(!raw) return 'Durum bilinmiyor'; if(raw==='24/7') return 'Şu an açık'; return 'Saat bilgisi mevcut'; }
 async function showPOI(item){
  const t=item.tags||{},name=t['name:tr']||t.name||'İsimsiz mekân',category=poiClass(t)[1];
  const details=[t['addr:street'],t['addr:housenumber'],t['addr:city']].filter(Boolean).join(' ');
@@ -352,7 +380,7 @@ async function showPOI(item){
  if(t.phone||t['contact:phone']){const phone=t.phone||t['contact:phone'];links.push(`<a class="sheet-link" href="tel:${escapeHTML(phone.replace(/[^+\d]/g,''))}">${escapeHTML(phone)}</a>`);}
  const menu=safeExternal(t['website:menu']||t['menu:website']||t['menu:url']||t.menu||'');if(menu)links.push(`<a class="sheet-link" href="${escapeHTML(menu)}" target="_blank" rel="noopener">Menüyü görüntüle ↗</a>`);
  const cover=safeExternal(t.image||'');const image=cover?`<img class="sheet-img" src="${escapeHTML(cover)}" loading="lazy" alt="${escapeHTML(name)}">`:'';
- let base=`${image}<p class="sheet-muted">${escapeHTML(category)}</p>${details?`<p>${escapeHTML(details)}</p>`:''}<p>🕒 ${escapeHTML(statusHours(t.opening_hours))}</p>${t.description?`<p>${escapeHTML(t.description)}</p>`:''}${links.length?`<p>${links.join(' · ')}</p>`:''}<p class="sheet-muted">Açık/kapalı durumu doğrulanmadı. OpenStreetMap bilgileri eksik veya eski olabilir.</p><button class="sheet-action" id="poiGo">📍 Buraya rota oluştur</button>`;
+ let base=`${image}<p class="sheet-muted">${escapeHTML(category)}</p>${details?`<p>${escapeHTML(details)}</p>`:''}<p>🕒 ${escapeHTML(statusHours(t.opening_hours))}</p><p>• ${escapeHTML(openingState(t.opening_hours))}</p>${t.description?`<p>${escapeHTML(t.description)}</p>`:''}${links.length?`<p>${links.join(' · ')}</p>`:''}<p class="sheet-muted">Açık/kapalı durumu yalnızca veri varsa gösterilir. OpenStreetMap bilgileri eksik veya eski olabilir.</p><button class="sheet-action" id="poiGo">📍 Buraya rota oluştur</button>`;
  sheet(name,base);$('poiGo').onclick=()=>{setDestination(item.lon??item.center?.lon,item.lat??item.center?.lat,name);closeSheet();};
  const wiki=t.wikipedia;if(!wiki||!/^([a-z-]+):(.+)$/.test(wiki))return;
  const language=wiki.split(':')[0],title=wiki.slice(language.length+1);
@@ -368,7 +396,7 @@ async function loadNearbyPOIs(){
  if(!state.map||state.map.getZoom()<13){clearPOIs();return;}
  if(Date.now()-lastNearbyFetch<16000)return;lastNearbyFetch=Date.now();
  const c=state.map.getCenter();if(nearbyController)nearbyController.abort();nearbyController=new AbortController();
- const q=`[out:json][timeout:12];(nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[amenity~"^(restaurant|cafe|fast_food|pharmacy|hospital|clinic|doctors|dentist|library|school|university|college|fuel|parking|bank|atm)$"];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[shop~"^(supermarket|convenience|bakery|mall|clothes|books)$"];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[historic];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[tourism~"^(museum|attraction|viewpoint|gallery)$"];);out center 90;`;
+ const q=`[out:json][timeout:14];(nwr(around:1300,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[amenity~"^(restaurant|cafe|fast_food|pharmacy|hospital|clinic|doctors|dentist|library|school|university|college|fuel|parking|bank|atm)$"];nwr(around:1300,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[shop~"^(supermarket|convenience|bakery|mall|clothes|books)$"];nwr(around:1300,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[historic];nwr(around:1300,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[tourism~"^(museum|attraction|viewpoint|gallery)$"];nwr(around:1300,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[amenity=place_of_worship];nwr(around:1300,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[natural~"^(peak|beach|waterfall)$"];);out center 110;`;
  try{const resp=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',body:q,signal:nearbyController.signal});if(!resp.ok)throw Error('Overpass '+resp.status);const data=await resp.json();if(!state.map||state.map.getZoom()<13)return;clearPOIs();
   for(const item of (data.elements||[]).slice(0,65)){const lng=item.lon??item.center?.lon,lat=item.lat??item.center?.lat;if(!Number.isFinite(lng)||!Number.isFinite(lat))continue;const el=document.createElement('button');el.className='poi-marker';const [icon,category,colorClass]=poiClass(item.tags||{});el.classList.add("poi-"+colorClass);el.textContent=icon;el.type='button';el.title=item.tags?.name||category;el.setAttribute('aria-label',el.title);el.onclick=e=>{e.stopPropagation();showPOI(item);};poiMarkers.push(new maplibregl.Marker({element:el,anchor:'center'}).setLngLat([lng,lat]).addTo(state.map));}
  }catch(e){if(e.name!=='AbortError')console.warn('POI data temporarily unavailable',e);}
@@ -384,10 +412,10 @@ function addWaterDepthBands(map){
   if(!base) return;
   const src=base.source, srcLayer=base['source-layer'];
   const defs=[
-    ['water-depth-band-1','#8ec5e8',['interpolate',['linear'],['zoom'],7,0,10,0.05,13,0.12,16,0.18],['interpolate',['linear'],['zoom'],7,0.5,10,1.6,13,4.5,16,10]],
-    ['water-depth-band-2','#5fa1cc',['interpolate',['linear'],['zoom'],7,0,10,0.07,13,0.18,16,0.28],['interpolate',['linear'],['zoom'],7,0.5,10,2.6,13,7,16,16]],
-    ['water-depth-band-3','#33698e',['interpolate',['linear'],['zoom'],7,0,10,0.10,13,0.22,16,0.34],['interpolate',['linear'],['zoom'],7,0.5,10,4,13,10,16,24]],
-    ['water-depth-band-4','#23384e',['interpolate',['linear'],['zoom'],7,0,10,0.08,13,0.18,16,0.28],['interpolate',['linear'],['zoom'],7,0.5,10,6,13,14,16,34]],
+    ['water-depth-band-1','#7ee0f5',['interpolate',['linear'],['zoom'],6,0,9,0.10,13,0.20,16,0.30],['interpolate',['linear'],['zoom'],6,0.8,10,2.0,13,5.5,16,12]],
+    ['water-depth-band-2','#4eb1db',['interpolate',['linear'],['zoom'],6,0,9,0.11,13,0.22,16,0.34],['interpolate',['linear'],['zoom'],6,1.0,10,3.0,13,8.0,16,18]],
+    ['water-depth-band-3','#2a7fb1',['interpolate',['linear'],['zoom'],6,0,9,0.10,13,0.20,16,0.30],['interpolate',['linear'],['zoom'],6,1.2,10,4.6,13,11,16,24]],
+    ['water-depth-band-4','#193f71',['interpolate',['linear'],['zoom'],6,0,9,0.08,13,0.17,16,0.26],['interpolate',['linear'],['zoom'],6,1.5,10,6.4,13,15,16,34]],
   ];
   for(const [id,color,opacity,width] of defs){
     try{map.addLayer({id,type:'line',source:src,'source-layer':srcLayer,paint:{'line-color':color,'line-opacity':opacity,'line-width':width}}, base.id);}catch(err){console.warn('water band',id,err)}
@@ -422,24 +450,78 @@ async function loadRestrictedZones(){
   }catch(err){ if(err.name!=='AbortError') console.warn('Restricted zones unavailable',err); }
 }
 function clearForestMarkers(){ for(const m of forestMarkers) m.remove(); forestMarkers=[]; }
+function makeTreeCluster(item,zoom){
+ const el=document.createElement('div'); el.className='tree-cluster'; const seed=Math.abs(Math.floor(((item.id||1)*7)%1000)); const count=zoom>=15?4+(seed%3):2+(seed%2);
+ if(currentSeason()==='autumn') el.classList.add('autumn');
+ for(let i=0;i<count;i++){ const t=document.createElement('i'); t.className='tree'; t.style.setProperty('--tx',`${(i-(count-1)/2)*8}px`); t.style.setProperty('--tz', String((seed+i)%3)); el.appendChild(t);}
+ return el;
+}
 async function loadForestMarkers(){
-  if(!state.map || state.map.getZoom()<12){ clearForestMarkers(); return; }
-  const c=state.map.getCenter();
+  if(!state.map || state.map.getZoom()<12.8){ clearForestMarkers(); return; }
+  const c=state.map.getCenter(); const zoom=state.map.getZoom();
   if(forestController) forestController.abort();
   forestController=new AbortController();
-  const query=`[out:json][timeout:16];(way(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[natural=wood];way(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[landuse=forest];relation(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[natural=wood];relation(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[landuse=forest];);out center 24;`;
+  const query=`[out:json][timeout:16];(way(around:3400,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[natural=wood];way(around:3400,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[landuse=forest];relation(around:3400,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[natural=wood];relation(around:3400,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[landuse=forest];);out center 30;`;
   try{
     const resp=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',body:query,signal:forestController.signal});
     if(!resp.ok) throw new Error('forest '+resp.status);
     const data=await resp.json();
     clearForestMarkers();
-    for(const item of (data.elements||[]).slice(0,22)){
+    for(const item of (data.elements||[]).slice(0,20)){
       const lng=item.center?.lon||item.lon, lat=item.center?.lat||item.lat; if(!Number.isFinite(lng)||!Number.isFinite(lat)) continue;
-      const el=document.createElement('div'); el.className='tree-marker'; el.textContent='🌲'; el.setAttribute('aria-label','Ağaçlık alan');
-      forestMarkers.push(new maplibregl.Marker({element:el,anchor:'center'}).setLngLat([lng,lat]).addTo(state.map));
+      const el=makeTreeCluster(item,zoom); el.setAttribute('aria-label','Ormanlık alan');
+      forestMarkers.push(new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat([lng,lat]).addTo(state.map));
     }
+    renderEnvironmentalEffects();
   }catch(err){ if(err.name!=='AbortError') console.warn('Forest markers unavailable',err); }
 }
 
+
+let landmarkMarkers=[], landmarkController=null, buildingLightMarkers=[], buildingController=null;
+function parseLocalTimeParts(s){ if(!s) return {h:(new Date()).getHours(), m:(new Date()).getMinutes()}; const m=s.match(/T(\d\d):(\d\d)/); return m?{h:+m[1],m:+m[2]}:{h:(new Date()).getHours(),m:(new Date()).getMinutes()}; }
+function renderSkyBar(data=weatherState.data){
+  const bar=$('skybar'); if(!bar||!data) return; const sun=$('sunOrb'), moon=$('moonOrb');
+  const sunrise=(data.daily?.sunrise||[])[0], sunset=(data.daily?.sunset||[])[0]; const now=data.current?.time; const np=parseLocalTimeParts(now); const current=np.h+np.m/60;
+  const rise=sunrise?parseLocalTimeParts(sunrise).h+parseLocalTimeParts(sunrise).m/60:6; const set=sunset?parseLocalTimeParts(sunset).h+parseLocalTimeParts(sunset).m/60:18;
+  const moonStart=set, moonEnd=rise+24;
+  const posOnArc=(pct)=>{ const x=6+pct*88; const y=28-Math.sin(Math.max(0,Math.min(1,pct))*Math.PI)*20; return {x,y}; };
+  const isDay=current>=rise && current<set; const sunP=Math.max(0,Math.min(1,(current-rise)/Math.max(1,set-rise))); const moonCurrent=current<rise?current+24:current; const moonP=Math.max(0,Math.min(1,(moonCurrent-moonStart)/Math.max(1,moonEnd-moonStart)));
+  const sp=posOnArc(sunP), mp=posOnArc(moonP); sun.style.left=sp.x+'%'; sun.style.top=sp.y+'px'; moon.style.left=mp.x+'%'; moon.style.top=mp.y+'px';
+  sun.style.opacity=isDay?'1':'.14'; moon.style.opacity=isDay?'.14':'1';
+  $('sunMeta').textContent=`Gün doğumu ${sunrise?sunrise.slice(11,16):'—'} • Gün batımı ${sunset?sunset.slice(11,16):'—'}`;
+}
+function renderEnvironmentalEffects(){
+  const wx=$('mapWeatherFx'), lf=$('mapLeafFx'), fg=$('mapFogFx'); if(!wx||!state.map) return; wx.replaceChildren(); lf.replaceChildren(); fg.replaceChildren();
+  const z=state.map.getZoom(); if(z<14.2 || z>18.4) return; const w=state.activeWeather || 'clear';
+  if(['rain','storm','snow'].includes(w)){
+    const count=w==='snow'?26:w==='storm'?44:32; for(let i=0;i<count;i++){ const p=document.createElement('i'); p.className='map-particle '+w; p.style.setProperty('--x',`${(i*17.7)%100}%`); p.style.setProperty('--delay',`${-(i%9)*.37}s`); p.style.setProperty('--dur',`${w==='snow'?4.4+(i%5)*.3:1.1+(i%5)*.15}s`); wx.appendChild(p);} }
+  if(w==='fog'){ for(let i=0;i<5;i++){ const f=document.createElement('i'); f.className='fog-bank'; f.style.setProperty('--x',`${(i*19)%100}%`); f.style.setProperty('--delay',`${i*.6}s`); fg.appendChild(f);} }
+  if(currentSeason()==='autumn' && forestMarkers.length && z>=14.6){ for(let i=0;i<18;i++){ const l=document.createElement('i'); l.className='leaf-particle'; l.style.setProperty('--x',`${(i*13.4)%100}%`); l.style.setProperty('--delay',`${-(i%7)*.45}s`); lf.appendChild(l);} }
+}
+function landmarkKind(item){ const t=item.tags||{}, name=((t['name:tr']||t.name||'')+' '+(t.wikipedia||'')).toLowerCase();
+  if(/jesus|cristo|christ/.test(name)) return ['statue-christ','Anıt']; if(/liberty|özgürlük/.test(name)) return ['statue-liberty','Anıt']; if(/kabe|kaaba/.test(name)) return ['kaaba','Kutsal yapı']; if(/great wall|çin seddi/.test(name)) return ['wall','Tarihî yapı'];
+  if(t.historic==='castle' || /kale|castle|fort/.test(name)) return ['castle','Kale']; if(t.amenity==='place_of_worship' || /mosque|cami|camii/.test(name)) return ['mosque','İbadet']; if(t.bridge || /bridge|köprü/.test(name)) return ['bridge','Köprü'];
+  if(t.historic || t.tourism==='attraction') return ['monument','İkonik yer']; return ['monument','İkonik yer'];
+}
+function landmarkElement(kind){ const el=document.createElement('button'); el.className=`landmark-model ${kind}`; el.type='button'; el.innerHTML='<span></span><span></span><span></span>'; return el; }
+function clearLandmarks(){ for(const m of landmarkMarkers) m.remove(); landmarkMarkers=[]; }
+async function loadLandmarks(){
+  if(!state.map || state.map.getZoom()<14.2){ clearLandmarks(); return; }
+  const c=state.map.getCenter(); if(landmarkController) landmarkController.abort(); landmarkController=new AbortController();
+  const q=`[out:json][timeout:16];(nwr(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[historic];nwr(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[tourism~"^(attraction|museum|viewpoint)$"];nwr(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[amenity=place_of_worship];nwr(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[bridge];);out center 45;`;
+  try{ const resp=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',body:q,signal:landmarkController.signal}); if(!resp.ok) throw new Error('landmarks '+resp.status); const data=await resp.json(); clearLandmarks();
+    for(const item of (data.elements||[]).slice(0,18)){ const lng=item.lon??item.center?.lon, lat=item.lat??item.center?.lat; if(!Number.isFinite(lng)||!Number.isFinite(lat)) continue; const [kind,label]=landmarkKind(item); const el=landmarkElement(kind); el.title=item.tags?.name||label; el.setAttribute('aria-label',el.title); el.onclick=(e)=>{e.stopPropagation();showPOI(item);}; landmarkMarkers.push(new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat([lng,lat]).addTo(state.map)); }
+  }catch(err){ if(err.name!=='AbortError') console.warn('Landmarks unavailable',err);} }
+function clearBuildingLights(){ for(const m of buildingLightMarkers) m.remove(); buildingLightMarkers=[]; }
+async function refreshBuildingLights(){
+  if(!state.map || document.body.classList.contains('day-theme') || state.map.getZoom()<15.8){ clearBuildingLights(); return; }
+  const b=state.map.getBounds(); if(!b) return; if(buildingController) buildingController.abort(); buildingController=new AbortController();
+  const q=`[out:json][timeout:14];(way(${b.getSouth().toFixed(5)},${b.getWest().toFixed(5)},${b.getNorth().toFixed(5)},${b.getEast().toFixed(5)})[building];);out center 55;`;
+  try{ const resp=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',body:q,signal:buildingController.signal}); if(!resp.ok) throw new Error('building lights '+resp.status); const data=await resp.json(); clearBuildingLights();
+    for(const item of (data.elements||[]).slice(0,45)){ const lng=item.center?.lon, lat=item.center?.lat; if(!Number.isFinite(lng)||!Number.isFinite(lat)) continue; const el=document.createElement('div'); el.className='building-light'; const count=2+(item.id%4); for(let i=0;i<count;i++){ const s=document.createElement('span'); s.style.setProperty('--tx',`${(i%2)*6}px`); s.style.setProperty('--ty',`${Math.floor(i/2)*6}px`); el.appendChild(s);} buildingLightMarkers.push(new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat([lng,lat]).addTo(state.map)); }
+  }catch(err){ if(err.name!=='AbortError') console.warn('Building lights unavailable',err); }
+}
+function refreshScene(){ loadNearbyPOIs(); loadRestrictedZones(); loadForestMarkers(); loadLandmarks(); updateWeather(); }
+
 // Wait for asynchronous map startup without blocking map rendering.
-(function initDiscover(){let tries=0;const timer=setInterval(()=>{tries++;if(state.map?.isStyleLoaded()){clearInterval(timer);applyDayNightTheme();state.map.on('moveend',()=>{loadNearbyPOIs();loadRestrictedZones();loadForestMarkers();});loadNearbyPOIs();loadRestrictedZones();loadForestMarkers();updateWeather().then(()=>applyDayNightTheme());}else if(tries>35)clearInterval(timer);},700);})();
+(function initDiscover(){let tries=0;const timer=setInterval(()=>{tries++;if(state.map?.isStyleLoaded()){clearInterval(timer);updateSeasonClass();applyDayNightTheme();state.map.on('moveend',refreshScene);state.map.on('zoomend',()=>{renderEnvironmentalEffects();refreshBuildingLights();loadLandmarks();loadForestMarkers();});state.map.on('rotate',renderEnvironmentalEffects);refreshScene();updateWeather().then(()=>{applyDayNightTheme();renderSkyBar();renderEnvironmentalEffects();refreshBuildingLights();});}else if(tries>35)clearInterval(timer);},700);})();
