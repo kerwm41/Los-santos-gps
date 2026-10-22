@@ -134,7 +134,7 @@ function add3DBuildings(map){
     map.addLayer({id:'ls-3d-buildings',type:'fill-extrusion',source:base.source,'source-layer':base['source-layer'],minzoom:14.2,
       paint:{
         'fill-extrusion-color': document.body.classList.contains('day-theme') ? '#3f4045' : '#26272b',
-        'fill-extrusion-height':['coalesce',['to-number',['get','render_height'],null],['to-number',['get','height'],null],18],
+        'fill-extrusion-height':['coalesce',['to-number',['get','render_height'],0],['to-number',['get','height'],0],12],
         'fill-extrusion-base':['coalesce',['get','render_min_height'],['get','min_height'],0],
         'fill-extrusion-opacity':['interpolate',['linear'],['zoom'],14.2,.75,17,.96]
       }
