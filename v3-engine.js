@@ -25,13 +25,31 @@ features.push({type:'Feature',geometry:{type:'Point',coordinates:c},properties:{
 map.getSource('ls-pois').setData({type:'FeatureCollection',features});
 }
 function replaceOldMarkers(){try{clearPOIs();clearForestMarkers();clearLandmarks();clearBuildingLights();}catch(_){};try{loadNearbyPOIs=()=>{};loadForestMarkers=()=>{};loadLandmarks=()=>{};refreshBuildingLights=()=>{};displayTileFallbacks=()=>{};}catch(_){} }
-function paintSea(){const layers=map.getStyle()?.layers||[];let water=layers.filter(l=>l.type==='fill'&&/water|ocean|lake/.test((l.id+' '+(l['source-layer']||'')).toLowerCase()));
-for(const layer of water){try{map.setPaintProperty(layer.id,'fill-color','#113452');map.setPaintProperty(layer.id,'fill-opacity',1)}catch(_){}}
-for(const layer of layers.filter(l=>/^water-depth-band-/.test(l.id))){try{map.removeLayer(layer.id)}catch(_){}}
-const base=water[0];if(!base)return;
-const stages=[['deep','#1b4c75',46,.60],['mid','#287daf',29,.67],['shallow','#55b8d1',16,.75],['coast','#a4e5e0',5,.85]];
-for(const [name,color,width,opacity] of stages){try{map.addLayer({id:'ls-sea-'+name,type:'line',source:base.source,'source-layer':base['source-layer'],paint:{'line-color':color,'line-width':['interpolate',['linear'],['zoom'],4,width*.1,9,width*.45,15,width], 'line-opacity':opacity,'line-blur':1.5}})}catch(e){console.warn('Sea band',e)}}
-// Styled coastline bands are NOT bathymetric measurements.
+function paintSea(){
+// Organic, smoothly interpolated and slightly warped water-depth *artwork*.
+// Repeating pattern is attached to the water polygon layer itself (no UI overlay).
+const n=512,canvas=document.createElement('canvas');canvas.width=canvas.height=n;
+const ctx=canvas.getContext('2d'),pixels=ctx.createImageData(n,n);
+const palette=[[7,31,59],[13,51,80],[21,77,112],[29,112,150],[37,146,184],[64,179,204],[105,211,221],[135,221,221]];
+function field(x,y){const u=x*2*Math.PI/n,v=y*2*Math.PI/n;
+ return .45*Math.sin(u*2+1.5*Math.sin(v*2)+.4*Math.cos(v*3)) + .30*Math.cos(v*3+1.3*Math.sin(u*2)) + .16*Math.sin(u*5-v*3+.8*Math.cos(v*2)) + .12*Math.sin(v*5+u*3) + .09*Math.cos(u*7+v*4);}
+for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+ const dx=.065*n*Math.sin(y*2*Math.PI/n*3+1.3*Math.cos(x*2*Math.PI/n*2));
+ const dy=.050*n*Math.sin(x*2*Math.PI/n*3+1.1*Math.cos(y*2*Math.PI/n*2));
+ const val=Math.max(0,Math.min(1,.49+.4*field(x+dx,y+dy)));
+ const t=val*(palette.length-1),k=Math.min(palette.length-2,Math.floor(t)),blend=t-k;
+ // Smooth across boundaries instead of hard contour stripes.
+ const eased=blend*blend*(3-2*blend),idx=4*(y*n+x);
+ for(let i=0;i<3;i++)pixels.data[idx+i]=Math.round(palette[k][i]*(1-eased)+palette[k+1][i]*eased);
+ pixels.data[idx+3]=255;
+}
+ctx.putImageData(pixels,0,0);
+try{if(map.hasImage('ls-organic-bathymetry'))map.removeImage('ls-organic-bathymetry');map.addImage('ls-organic-bathymetry',ctx.getImageData(0,0,n,n),{pixelRatio:1});}catch(e){console.warn('Water texture',e);return}
+const layers=map.getStyle()?.layers||[];
+for(const layer of layers.filter(l=>/^ls-sea-|^water-depth-band-/.test(l.id))){try{map.removeLayer(layer.id)}catch(_){}}
+for(const layer of layers.filter(l=>l.type==='fill'&&/water|ocean|lake/.test((l.id+' '+(l['source-layer']||'')).toLowerCase()))){
+ try{map.setPaintProperty(layer.id,'fill-color','#13436b');map.setPaintProperty(layer.id,'fill-pattern','ls-organic-bathymetry');map.setPaintProperty(layer.id,'fill-opacity',1)}catch(e){console.warn('Water layer',layer.id,e)}
+}
 }
 function makeControls(){const aside=document.querySelector('.tools');const b=document.createElement('button');b.id='filterToggle';b.title='Haritada gösterilecek yerler';b.textContent='☷';aside.prepend(b);
 const panel=document.createElement('section');panel.id='filterPanel';panel.hidden=true;panel.innerHTML='<div class="filter-head"><strong>HARİTA KATMANLARI</strong><button id="filterClose" aria-label="Kapat">×</button></div><small>Görmek istediklerini seç</small><div id="filterList"></div>';
@@ -50,28 +68,91 @@ const resp=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2
 function initSearch(){const old=$('searchForm');const copy=old.cloneNode(true);old.parentNode.replaceChild(copy,old);copy.addEventListener('submit',smartSearch);
 const input=$('query');input.addEventListener('input',()=>{if(input.value.length<3){$('results').hidden=true;return;}clearTimeout(input._t);input._t=setTimeout(()=>{if(input.value.trim().length>2)smartSearch({preventDefault(){}})},440)});
 }
-function featureModels(){const z=map.getZoom();if(z<13.6)return[];const bounds=map.getBounds(),models=[],seen=new Set();
-for(const layer of ['landcover','landuse'])for(const f of featureList(layer)){const p=f.properties||{};if(!/wood|forest/.test(String(p.class||p.subclass||p.type||'')))continue;const coord=lngLat(f);if(!coord||!bounds.contains(coord))continue;const k=coord.map(v=>v.toFixed(4)).join(',');if(seen.has(k))continue;seen.add(k);models.push({type:'tree',coord,id:k});if(models.length>=55)break;}
-for(const f of featureList('poi')){const p=f.properties||{};const category=categoryOf(p);if(!['worship','landmark'].includes(category)||!categoryOn[category])continue;const coord=lngLat(f);if(!coord||!bounds.contains(coord))continue;let n=readableName(p).toLowerCase(),sub=String(p.subclass||p.class).toLowerCase();let type=/liberty|özgürlük/.test(n)?'liberty':/christ|cristo|jesus/.test(n)?'christ':/kaaba|kabe/.test(n)?'kaaba':/castle|fort|kale/.test(n+' '+sub)?'castle':/bridge|köprü/.test(n+' '+sub)?'bridge':category==='worship'?'mosque':'monument';models.push({type,coord,id:coord.join()+type});if(models.length>=76)break;}
-if(z>=15.7 && document.body.classList.contains('night-theme')){
- for(const f of featureList('building')){if(models.length>=95)break;const c=lngLat(f);if(!c||!bounds.contains(c))continue;models.push({type:'lightbuilding',coord:c,id:c.join(':')})}
-}return models;}
+function insidePolygon(p,ring){let c=false;for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+ const a=ring[i],b=ring[j];if((a[1]>p[1])!==(b[1]>p[1]) && p[0]<(b[0]-a[0])*(p[1]-a[1])/(b[1]-a[1])+a[0])c=!c;}return c;}
+function featureModels(){const z=map.getZoom(),bounds=map.getBounds(),models=[],seen=new Set();if(z<13.4)return models;
+// Forest density is sampled INSIDE mapped forest polygons, not a single point per forest.
+let forestCount=0;
+for(const layer of ['landcover','landuse'])for(const f of featureList(layer)){
+ if(forestCount>=260)break;
+ const p=f.properties||{};if(!/wood|forest/.test(String(p.class||p.subclass||p.type||'')))continue;
+ const polygons=f.geometry?.type==='Polygon'?[f.geometry.coordinates]:f.geometry?.type==='MultiPolygon'?f.geometry.coordinates:[];
+ for(const polygon of polygons){const ring=polygon[0];if(!ring||ring.length<4)continue;
+ const lo=Math.max(bounds.getWest(),Math.min(...ring.map(v=>v[0]))),hi=Math.min(bounds.getEast(),Math.max(...ring.map(v=>v[0])));
+ const bot=Math.max(bounds.getSouth(),Math.min(...ring.map(v=>v[1]))),top=Math.min(bounds.getNorth(),Math.max(...ring.map(v=>v[1])));
+ if(hi<=lo||top<=bot)continue;
+ // Roughly 18–35 meter intervals when zoomed in; more space at lower zoom.
+ const latitude=(bot+top)*.5;const metersLongitude=111320*Math.cos(latitude*Math.PI/180),metersLatitude=111320;
+ const spacing=z>15?29:z>14?49:90;const nx=Math.min(45,Math.ceil((hi-lo)*metersLongitude/spacing));const ny=Math.min(45,Math.ceil((top-bot)*metersLatitude/spacing));
+ if(nx<1||ny<1)continue;
+ const srcid=p.osm_id||f.id||`${lo.toFixed(4)}-${bot.toFixed(4)}`;
+ for(let iy=0;iy<ny;iy++)for(let ix=0;ix<nx;ix++){
+ if(forestCount>=260)break;
+ const seed=(ix*1699+iy*983+String(srcid).length*577)|0;
+ const rand=Math.abs(Math.sin(seed*1.334)*100000)%1;
+ const coord=[lo+(ix+.2+.6*rand)/nx*(hi-lo),bot+(iy+.2+.6*((rand*7.919)%1))/ny*(top-bot)];
+ if(!insidePolygon(coord,ring))continue;const key=coord.map(v=>v.toFixed(5)).join(':');if(seen.has(key))continue;seen.add(key);
+ models.push({type:'tree',coord,id:key});forestCount++;
+ }
+ }
+}
+for(const f of featureList('poi')){
+ const p=f.properties||{},category=categoryOf(p);if(!['worship','landmark'].includes(category)||!categoryOn[category])continue;
+ const coord=lngLat(f);if(!coord||!bounds.contains(coord))continue;
+ const name=readableName(p).toLowerCase(),sub=String(p.subclass||p.class).toLowerCase();
+ let type=/liberty|özgürlük/.test(name)?'liberty':/christ|cristo|jesus/.test(name)?'christ':/kaaba|kabe/.test(name)?'kaaba':/castle|fort|kale/.test(name+' '+sub)?'castle':/bridge|köprü/.test(name+' '+sub)?'bridge':category==='worship'?'mosque':'monument';
+ const id=coord.join()+type;if(seen.has(id))continue;seen.add(id);models.push({type,coord,id});if(models.length>=440)break;
+}
+const hour=window.lsPreviewTime?.(),night=hour===null||hour===undefined?document.body.classList.contains('night-theme'):(hour<360||hour>=1080);
+if(z>=15 && night){
+ let used=0;
+ for(const f of featureList('building')){if(used>=65)break;
+ const c=lngLat(f);if(!c||!bounds.contains(c))continue;
+ const poly=f.geometry?.type==='Polygon'?f.geometry.coordinates[0]:f.geometry?.type==='MultiPolygon'?f.geometry.coordinates[0][0]:null;
+ if(!poly||poly.length<4)continue;
+ models.push({type:'lightbuilding',coord:c,id:'b'+(f.id||used),outline:poly,height:+(f.properties?.render_height||f.properties?.height)||16});used++;
+ }
+ for(const f of featureList('transportation')){if(used>=88)break;const p=f.properties||{};
+ if(!(p.brunnel==='bridge'||p.bridge===1||p.bridge==='yes'||p.subclass==='bridge'))continue;
+ const c=lngLat(f)|| (f.geometry?.type==='LineString'?f.geometry.coordinates[Math.floor(f.geometry.coordinates.length/2)]:null);
+ if(c&&bounds.contains(c)){models.push({type:'lightbridge',coord:c,id:'bridge'+used});used++}
+ }
+}
+return models;}
 function initThreeLayer(){if(!window.THREE||modelLayer)return;const T=THREE;const scene=new T.Scene();const camera=new T.Camera();const lights=new T.AmbientLight(0xffffff,1.4);scene.add(lights);const rendererConfig={};let renderer=null;const groups=[];
 function mat(c){return new T.MeshLambertMaterial({color:c,flatShading:true})}const stone=mat(0xc9c4b3),stone2=mat(0xaea99c), roof=mat(0x8197ac), tree=mat(0x516858),trunk=mat(0x715a4a), gold=mat(0xe5cb80),black=mat(0x26272a),bronze=mat(0x8fae98);
 function cube(group,x,y,z,w,h,d,material){const mesh=new T.Mesh(new T.BoxGeometry(w,h,d),material);mesh.position.set(x,y,z);group.add(mesh);return mesh}
 function cone(group,x,y,z,r,h,material,verts=5){const mesh=new T.Mesh(new T.ConeGeometry(r,h,verts),material);mesh.position.set(x,y,z);group.add(mesh);return mesh}
 function sphere(group,x,y,z,r,material){const mesh=new T.Mesh(new T.SphereGeometry(r,8,6),material);mesh.position.set(x,y,z);group.add(mesh);return mesh}
-function geometry(type,id){const g=new T.Group();if(type==='tree'){let seed=id.split('').reduce((a,c)=>a+c.charCodeAt(0),0);for(let i=0;i<5;i++){const x=((seed*(i+3)*7)%29)-14,z=((seed*(i+5)*11)%29)-14,h=11+(i%4)*3;cube(g,x,2,z,2,4,2,trunk);cone(g,x,h*.54,z,6,h,tree,5)}}
+function geometry(type,id){const g=new T.Group();if(type==='tree'){const seed=id.split('').reduce((a,c)=>a+c.charCodeAt(0),0),h=9+seed%7;cube(g,0,1.9,0,1.6,3.8,1.6,trunk);cone(g,0,h*.48,0,5.4,h*.74,tree,5);cone(g,0,h*.72,0,4.0,h*.58,tree,5);cone(g,0,h*.99,0,2.8,h*.48,tree,5)}
 else if(type==='mosque'){cube(g,0,5,0,30,10,22,stone);sphere(g,0,12,0,9,roof);for(const x of [-18,18]){cube(g,x,11,0,3,22,3,stone);cone(g,x,23,0,2.9,5,roof,6)}}
 else if(type==='castle'){cube(g,0,5,0,28,10,20,stone);for(const x of [-14,14])for(const z of [-10,10]){cube(g,x,11,z,7,23,7,stone2);cone(g,x,24,z,5,8,roof,4)}}
 else if(type==='kaaba'){cube(g,0,7,0,19,14,18,black);cube(g,0,10,9.1,19,.8,.5,gold)}
 else if(type==='liberty'||type==='christ'){cube(g,0,3,0,12,6,12,stone2);cube(g,0,16,0,4,22,4,bronze);sphere(g,0,29,0,3,bronze);if(type==='christ')cube(g,0,23,0,27,3.6,3,bronze);else{cube(g,5,28,0,2,14,2,bronze);sphere(g,5,36,0,2,gold)}}
 else if(type==='bridge'){cube(g,0,12,0,46,3,13,stone);for(const x of [-18,-7,7,18]){cube(g,x,18,5,1,12,1,stone2);sphere(g,x,24,5,1.6,gold)}}
-else if(type==='lightbuilding'){for(let side of [-1,1])for(let x of [-3,0,3])for(let y of [5,9,13,17]){if((x+y+side)%4===0)continue;cube(g,x,y,side*8,.9,1.25,.22,gold)}}
+else if(type==='lightbuilding'){ /* windows generated on exact polygon walls below */ }
+else if(type==='lightbridge'){for(let i=-3;i<=3;i++){cube(g,i*6,3,0,.6,6,.6,stone2);sphere(g,i*6,6,0,1.3,gold)}}
 else{cube(g,0,6,0,14,12,14,stone);cone(g,0,15,0,8,7,roof,5)}return g}
+const windowMat=new T.MeshBasicMaterial({color:0xffdf80,side:T.DoubleSide});
+function addWindows(g,m){const ring=m.outline,height=Math.min(38,Math.max(8,m.height)),center=m.coord;
+ if(!ring)return;const mx=111320*Math.cos(center[1]*Math.PI/180),my=111320;
+ for(let e=0;e<ring.length-1;e++){
+  const a=ring[e],b=ring[e+1],dx=(b[0]-a[0])*mx,dz=(b[1]-a[1])*my,length=Math.hypot(dx,dz);
+  if(length<5||length>180)continue;
+  const cols=Math.min(10,Math.floor(length/4)),floors=Math.min(10,Math.floor((height-2)/3.5));
+  for(let col=0;col<cols;col++)for(let floor=0;floor<floors;floor++){
+   const seed=(e*41+col*13+floor*29 + ring.length*7)%11;if(seed<3)continue;
+   const t=(col+.5)/cols,x=(a[0]+t*(b[0]-a[0])-center[0])*mx,z=(a[1]+t*(b[1]-a[1])-center[1])*my;
+   const face=new T.Mesh(new T.PlaneGeometry(Math.min(1.3,length/cols*.5),1.35),windowMat);
+   // Offset away from the building wall to prevent z-fighting.
+   face.position.set(x+(dz/length)*.16,3.2+floor*3.5,z-(dx/length)*.16);
+   face.rotation.y=Math.atan2(dz,dx);g.add(face);
+  }
+ }
+}
 modelLayer={id:'ls-anchored-models',type:'custom',renderingMode:'3d',onAdd(m,gl){renderer=new T.WebGLRenderer({canvas:m.getCanvas(),context:gl,antialias:false});renderer.autoClear=false;renderer.setPixelRatio(1);},render(gl,args){if(!renderer)return;const matrix=args?.defaultProjectionData?.mainMatrix||args?.matrix;if(!matrix)return;camera.projectionMatrix.fromArray(matrix);renderer.resetState();renderer.render(scene,camera)}};
 map.addLayer(modelLayer);
-window.lsUpdateThree=models=>{for(const g of groups)scene.remove(g);groups.length=0;const z=map.getZoom();if(z<13.6)return;const C=maplibregl.MercatorCoordinate;for(const m of models){const mc=C.fromLngLat(m.coord,0), scale=mc.meterInMercatorCoordinateUnits();const g=geometry(m.type,m.id);g.position.set(mc.x,mc.y,mc.z);g.rotation.x=Math.PI/2;g.scale.setScalar(scale);scene.add(g);groups.push(g)} };
+window.lsUpdateThree=models=>{for(const g of groups)scene.remove(g);groups.length=0;const z=map.getZoom();if(z<13.6)return;const C=maplibregl.MercatorCoordinate;for(const m of models){const mc=C.fromLngLat(m.coord,0), scale=mc.meterInMercatorCoordinateUnits();const g=geometry(m.type,m.id);if(m.type==='lightbuilding')addWindows(g,m);g.position.set(mc.x,mc.y,mc.z);g.rotation.x=Math.PI/2;g.scale.setScalar(scale);scene.add(g);groups.push(g)} };
 }
 function refreshModels(){if(!map)return;if(window.lsUpdateThree)window.lsUpdateThree(featureModels());}
 function init(){if(ready)return;map=state.map;if(!map?.isStyleLoaded())return;ready=true;replaceOldMarkers();initLayers();paintSea();makeControls();initSearch();
@@ -81,7 +162,7 @@ const three=document.createElement('script');three.src='https://cdn.jsdelivr.net
 // Update as data changes, without resurrecting the old detached DOM markers.
 setInterval(()=>{if(!map||!map.isStyleLoaded())return;drawPOIs();
 const d=weatherState?.data;if(!d)return;const local=new Date(Date.now()+(d.utc_offset_seconds||0)*1000);const t=local.toISOString().slice(0,16);renderSkyBar({...d,current:{...d.current,time:t}});
-if(window.lsPreviewTime()==null){const sun=d.daily?.sunrise?.[0]?.slice(11,16)||'06:00',set=d.daily?.sunset?.[0]?.slice(11,16)||'18:00',h=t.slice(11,16);applyDayNightTheme(h>=sun&&h<set);} },60000);
+if(window.lsPreviewTime()==null){const sun=d.daily?.sunrise?.[0]?.slice(11,16)||'06:00',set=d.daily?.sunset?.[0]?.slice(11,16)||'18:00',h=t.slice(11,16);applyDayNightTheme(h>=sun&&h<set);refreshModels();} },60000);
 }
 const poll=setInterval(()=>{if(state.map?.isStyleLoaded()){clearInterval(poll);init()}},350);
 })();

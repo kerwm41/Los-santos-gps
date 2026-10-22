@@ -1,21 +1,16 @@
-# Los Santos GPS v3.0 — Görsel harita altyapısı (deneysel)
+LOS SANTOS GPS v4.0 — GÖRSEL GÜNCELLEME
 
-## Eklenen / değiştirilen
-- Vektör harita koordinatlarına bağlı POI noktaları, mekan adları ve kategori renkleri (kaynak: açık OSM / OpenFreeMap vektör döşemeleri)
-- Sağda açılır hastane, eczane, kafe, restoran, okul, kültür, ibadet, mağaza, doğa, anıt filtre paneli
-- Bölge merkezli ve kategori odaklı arama; yakın sonuçları önceleme
-- Açık turkuazdan laciverte kıyıya paralel stilize su konturu bantları
-- Gerçek geocoordinate konumuna sabitlenen, Three.js (harita WebGL sahnesi) ile üretilen geometrik low-poly ağaç, cami, kale, heykel, köprü örnek modelleri
-- Gün döngüsü çubuğunda otomatik/manual saat sürgüsü
-- Yakında gece binaları çevresinde temsili sabit sarı pencere ışığı noktaları
-- Daha az DOM marker işaretleri; hareket ederken daha stabil çizim amaçlanıyor
+Bu sürüm v3 üzerine hazırlanmıştır. ZIP içindeki dosyaları GitHub deponuzun ANA DİZİNİNE yükleyin, önce v3 yedeğinizi alın.
 
-## Önemli sınırlar
-- Temsili 3D modeller gerçeğe özel üç boyutlu mimari rekonstrüksiyon DEĞİLDİR. Camiler ve başka binalar çeşidine göre şablon. Her ikon her yerde bulunmayabilir.
-- Stilize su bantları gerçekte ölçülen deniz derinliği ya da batimetrik eşyükselti değildir. Gerçek derinlik için bölgesel batimetri verisi gerekir.
-- POI ve model görünmesi haritanın sunabildiği vektör döşemelerdeki POI ve orman verisine ve zoom'a bağlıdır.
-- Three.js CDN ağı erişimi kesilirse 3D sahne kapalı kalır, harita ve filtreler çalışmaya devam eder.
-- Gerçek cihazda / GitHub Pages üzerinden manuel görsel doğrulama yapılmadı. Canlı sistemde çalışması garantilenemez.
+Geliştirmeler:
+- Deniz: sabit çizgisel bantlar kaldırıldı; su alanlarında organik, yumuşak mavi tonlu desen (stilize, gerçek batimetri verisi değil).
+- Orman: haritanın bildiği forest/wood poligonlarının içinde çok sayıda alçak poligonlu üç boyutlu ağaç modeli (veri varsa).
+- Gece ışıkları: yakındaki bina poligonlarının cephelerine sarı geometrik pencere yüzeyleri; köprü verisi mevcutsa aydınlatma modelleri.
+- Önceki v3 kategori filtreleri, arama ve saat sürgüsü korunur.
 
-## Kurulum
-ZIP içindeki dosyaların tamamını `Los-santos-gps` deposunun KÖK dizinine yükleyin. `v3-engine.js` mutlaka aynı dizinde olmalıdır. Servis işçisi v30 cache anahtarıyla yenilenir. GitHub Pages deployed olduktan sonra Ctrl+Shift+R yapın.
+Sınırlamalar:
+* Gerçek coğrafi veri olmayan orman/bina/yapılar çizilemez.
+* İkonik yapılar için model şablonları kullanılır; Rio İsa Heykeli gibi her yapı için birebir elle hazırlanmış özgün varlıklar henüz mevcut değil.
+* Deniz görseli organik stilize derinlik sanatıdır, batimetri haritası değildir; su deseninin tekrar ettiği bölgeler görülebilir.
+* 3D çizimler MapLibre ve Three.js WebGL kütüphanelerine ve internet erişimine bağımlıdır.
+* Gerçek cihazda iPhone performansı ve GitHub Pages yayını doğrulanmadı. Buradaki testler sözdizimi ve arşiv bütünlüğüyle sınırlıdır.
