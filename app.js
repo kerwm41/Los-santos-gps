@@ -68,7 +68,7 @@ async function start(){
     let res;
     try{res=await fetch('https://tiles.openfreemap.org/styles/liberty',{signal:ctrl.signal,cache:'no-store'});}finally{clearTimeout(timer)}
     if(!res.ok)throw Error(`Harita stil yanıtı: ${res.status}`);
-    initialize(grayStyle(await res.json()));
+    initialize('https://tiles.openfreemap.org/styles/liberty');
   }catch(e){
     console.warn('Özel stil alınamadı, standart harita deneniyor:',e);
     status.textContent='YEDEK HARİTA AÇILIYOR';
