@@ -1,10 +1,50 @@
-/* Los Santos GPS v0.1 — browser PWA. Requires HTTPS for geolocation. */
+/* Los Santos GPS v0.4 — browser PWA. Requires HTTPS for geolocation. */
 const $=id=>document.getElementById(id);
 const state={map:null,position:null,heading:0,watch:null,destination:null,route:null,routeOptions:[],routeIndex:0,following:false,minimap:false,lastReroute:0};
 const msg=(s)=>{const e=$('toast');e.textContent=s;e.hidden=false;clearTimeout(msg.timer);msg.timer=setTimeout(()=>e.hidden=true,5200)};
 const fmtDist=m=>m<1000?`${Math.round(m)} m`:`${(m/1000).toFixed(1)} km`;
 const fmtTime=s=>s<3600?`${Math.max(1,Math.round(s/60))} dk`:`${Math.floor(s/3600)} sa ${Math.round((s%3600)/60)} dk`;
 const styleURL='https://tiles.openfreemap.org/styles/liberty';
+let compassActive=false, compassHeading=null, lastCompassAt=0;
+const wrapDegrees=n=>(n%360+360)%360;
+function currentHeading(){return compassActive&&compassHeading!==null?compassHeading:state.heading;}
+function updateMarkerHeading(){if(playerMarker)playerMarker.setRotation(currentHeading());}
+function handleOrientation(e){
+  let h=null;
+  // iOS Safari supplies magnetic-north compass heading in clockwise degrees.
+  if(typeof e.webkitCompassHeading==='number'&&Number.isFinite(e.webkitCompassHeading)){
+    if(typeof e.webkitCompassAccuracy==='number'&&e.webkitCompassAccuracy<0)return;
+    h=e.webkitCompassHeading;
+  }else if(e.absolute===true&&typeof e.alpha==='number'&&Number.isFinite(e.alpha)){
+    // Absolute alpha increases counter-clockwise; compensate for screen orientation.
+    const a=(screen.orientation&&typeof screen.orientation.angle==='number')?screen.orientation.angle:0;
+    h=360-e.alpha+a;
+  }
+  if(h===null)return;
+  compassHeading=wrapDegrees(h);lastCompassAt=Date.now();
+  updateMarkerHeading();
+  if(state.following&&state.map)state.map.easeTo({bearing:compassHeading,duration:180});
+  const b=$('heading');b.classList.add('on');b.setAttribute('aria-label','Pusula açık — yönü takip et');
+}
+async function enableCompass(){
+ if(!window.DeviceOrientationEvent){msg('Bu tarayıcı pusula sensörünü desteklemiyor.');return false;}
+ try{
+   // Must run from a direct button tap on iOS.
+   if(typeof DeviceOrientationEvent.requestPermission==='function'){
+     const result=await DeviceOrientationEvent.requestPermission();
+     if(result!=='granted'){msg('Pusula izni verilmedi. Safari’de izin verip tekrar dene.');return false;}
+   }
+   window.removeEventListener('deviceorientation',handleOrientation,true);
+   window.removeEventListener('deviceorientationabsolute',handleOrientation,true);
+   window.addEventListener('deviceorientation',handleOrientation,true);
+   window.addEventListener('deviceorientationabsolute',handleOrientation,true);
+   compassActive=true;
+   msg('Pusula açıldı. Telefonunu sağa sola döndür.');
+   setTimeout(()=>{if(!lastCompassAt||Date.now()-lastCompassAt>3500)msg('Pusula verisi gelmedi. iPhone Safari hareket ve yön erişimini kontrol et.');},3800);
+   return true;
+ }catch(err){console.warn('Compass permission:',err);msg('Pusula izni alınamadı. Safari ayarlarından Hareket ve Yön erişimini kontrol et.');return false;}
+}
+
 function grayStyle(style){
  const s=JSON.parse(JSON.stringify(style));s.name='Los Santos GTA-inspired';
  // MapLibre receives an in-memory style, so resolve any relative asset URLs against the provider's style endpoint.
@@ -68,7 +108,7 @@ async function start(){
     let res;
     try{res=await fetch('https://tiles.openfreemap.org/styles/liberty',{signal:ctrl.signal,cache:'no-store'});}finally{clearTimeout(timer)}
     if(!res.ok)throw Error(`Harita stil yanıtı: ${res.status}`);
-    initialize('https://tiles.openfreemap.org/styles/liberty');
+    initialize(styleURL); // Known working OpenFreeMap style; GTA colours will be restored separately.
   }catch(e){
     console.warn('Özel stil alınamadı, standart harita deneniyor:',e);
     status.textContent='YEDEK HARİTA AÇILIYOR';
@@ -86,8 +126,8 @@ function locate(){if(!navigator.geolocation){msg('Bu tarayıcıda GPS kullanıla
   $('speed').innerHTML=`${Math.max(0,Math.round((p.coords.speed||0)*3.6))} <small>km/sa</small>`;
   $('gpsDot').style.color=p.coords.accuracy<60?'#81e6ad':'#ebbb66';$('status').textContent=`GPS ±${Math.round(p.coords.accuracy)} M`;
   if(!playerMarker){const el=document.createElement('div');el.className='player';playerMarker=new maplibregl.Marker({element:el,rotationAlignment:'map'}).setLngLat(pos).addTo(state.map);}else playerMarker.setLngLat(pos);
-  if(playerMarker)playerMarker.setRotation(state.heading);
-  if(state.following)state.map.easeTo({center:pos,zoom:state.minimap?17:16,bearing:state.heading,pitch:state.minimap?35:0,duration:650});
+  if(playerMarker)updateMarkerHeading();
+  if(state.following)state.map.easeTo({center:pos,zoom:state.minimap?17:16,bearing:currentHeading(),pitch:state.minimap?35:0,duration:650});
   if(state.destination&&!state.route)calculateRoute();
   if(state.route&&state.following)updateGuidance(pos);
  },err=>{console.error(err);$('status').textContent='GPS İZNİ GEREKLİ';msg('Konum alınamadı: Safari ayarlarında konum izni ver ve HTTPS kullan.');},{enableHighAccuracy:true,maximumAge:1500,timeout:16000});
@@ -106,8 +146,8 @@ function updateGuidance(pos){if(!state.route)return;let best=Infinity;for(const 
 function translateManeuver(m){const mod=m.modifier||'';const direction=mod.includes('left')?'sola':mod.includes('right')?'sağa':'';if(m.type==='arrive')return 'hedefe ulaşın';if(m.type==='roundabout'||m.type==='rotary')return 'döner kavşağa girin';if(m.type==='depart')return 'yola devam edin';if(m.type==='turn'||m.type==='fork'||m.type==='end of road')return `${direction||'düz'} dönün`;return direction?`${direction} devam edin`:'düz devam edin';}
 async function search(e){e.preventDefault();const query=$('query').value.trim();if(query.length<3){msg('En az 3 karakter yaz.');return;}const area=$('results');area.hidden=false;area.textContent='Aranıyor...';try{const url=`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&accept-language=tr&q=${encodeURIComponent(query)}`;const res=await fetch(url,{headers:{Accept:'application/json'}});if(!res.ok)throw Error('Arama servisinde hata');const data=await res.json();area.replaceChildren();if(!data.length){area.textContent='Sonuç bulunamadı';return;}for(const p of data){const b=document.createElement('button');const strong=document.createElement('strong');strong.textContent=p.name||p.display_name.split(',')[0];const small=document.createElement('small');small.textContent=p.display_name;b.append(strong,small);b.onclick=()=>{setDestination(Number(p.lon),Number(p.lat),strong.textContent);area.hidden=true;$('query').blur();};area.appendChild(b);}}catch(err){console.error(err);area.textContent='Arama başarısız. Biraz sonra tekrar deneyin.';}}
 $('searchForm').addEventListener('submit',search);$('locate').onclick=locate;$('clearRoute').onclick=clearRoute;$('zoomIn').onclick=()=>state.map?.zoomIn();$('zoomOut').onclick=()=>state.map?.zoomOut();
-$('mode').onclick=()=>{state.minimap=!state.minimap;document.body.classList.toggle('minimap',state.minimap);$('mode').classList.toggle('on',state.minimap);$('mode').setAttribute('aria-pressed',String(state.minimap));state.map?.easeTo({zoom:state.minimap?17:14,pitch:state.minimap?35:0,bearing:state.minimap?state.heading:0});};
-$('heading').onclick=()=>{state.following=true;if(state.position)state.map?.easeTo({center:state.position,bearing:state.heading,zoom:16});else locate();};
-$('followRoute').onclick=()=>{if(!state.route){msg('Önce geçerli bir rota oluştur.');return;}state.following=!state.following;$('followRoute').textContent=state.following?'■ NAVİGASYONU DURDUR':'▶ NAVİGASYONU BAŞLAT';if(state.following){if(state.watch===null)locate();state.map.easeTo({center:state.position||state.destination,bearing:state.heading,zoom:17,pitch:35});msg('Canlı navigasyon açık. Ekran kilitliyken web uygulaması durabilir.');}};
+$('mode').onclick=()=>{state.minimap=!state.minimap;document.body.classList.toggle('minimap',state.minimap);$('mode').classList.toggle('on',state.minimap);$('mode').setAttribute('aria-pressed',String(state.minimap));state.map?.easeTo({zoom:state.minimap?17:14,pitch:state.minimap?35:0,bearing:state.minimap?currentHeading():0});};
+$('heading').onclick=async()=>{const ok=await enableCompass();if(!ok)return;state.following=true;if(state.position)state.map?.easeTo({center:state.position,bearing:currentHeading(),zoom:16});else locate();};
+$('followRoute').onclick=()=>{if(!state.route){msg('Önce geçerli bir rota oluştur.');return;}state.following=!state.following;$('followRoute').textContent=state.following?'■ NAVİGASYONU DURDUR':'▶ NAVİGASYONU BAŞLAT';if(state.following){if(state.watch===null)locate();state.map.easeTo({center:state.position||state.destination,bearing:currentHeading(),zoom:17,pitch:35});msg('Canlı navigasyon açık. Ekran kilitliyken web uygulaması durabilir.');}};
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.warn));
 start();
