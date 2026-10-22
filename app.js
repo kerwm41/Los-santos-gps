@@ -7,20 +7,10 @@ const hr = (a, b = 0) => { const x = Math.sin(a * 127.1 + b * 311.7 + 1.7) * 437
 const $ = id => document.getElementById(id);
 let isNight = true;
 
-/* ---------- Harita ---------- */
-const tiles = (p) => ['a', 'b', 'c', 'd'].map(s => `https://${s}.basemaps.cartocdn.com/${p}/{z}/{x}/{y}.png`);
+/* ---------- Harita (OpenFreeMap: anahtarsız, ücretsiz) ---------- */
+const STYLES = { dark: 'https://tiles.openfreemap.org/styles/dark', day: 'https://tiles.openfreemap.org/styles/positron' };
 const map = new maplibregl.Map({
-  container: 'map', center: CFG.center, zoom: 16.2, pitch: 62, bearing: -24, maxPitch: 75,
-  style: { version: 8,
-    sources: {
-      dark: { type: 'raster', tiles: tiles('dark_nolabels'), tileSize: 256, maxzoom: 19, attribution: '© OpenStreetMap © CARTO' },
-      day:  { type: 'raster', tiles: tiles('rastertiles/voyager_nolabels'), tileSize: 256, maxzoom: 19, attribution: '© OpenStreetMap © CARTO' }
-    },
-    layers: [
-      { id: 'bg', type: 'background', paint: { 'background-color': '#1d2024' } },
-      { id: 'dark', type: 'raster', source: 'dark', paint: { 'raster-saturation': -0.5, 'raster-brightness-max': 0.85 } },
-      { id: 'day', type: 'raster', source: 'day', layout: { visibility: 'none' }, paint: { 'raster-saturation': -0.65 } }
-    ] }
+  container: 'map', style: STYLES.dark, center: CFG.center, zoom: 16.2, pitch: 62, bearing: -24, maxPitch: 75
 });
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
 map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: true, positionOptions: { enableHighAccuracy: true } }), 'top-right');
@@ -34,7 +24,7 @@ const OR = maplibregl.MercatorCoordinate.fromLngLat(CFG.center, 0), SC = OR.mete
 let renderer;
 const worldLayer = {
   id: 'world', type: 'custom', renderingMode: '3d',
-  onAdd(m, gl) { renderer = new THREE.WebGLRenderer({ canvas: m.getCanvas(), context: gl, antialias: true }); renderer.autoClear = false; },
+  onAdd(m, gl) { if (!renderer) { renderer = new THREE.WebGLRenderer({ canvas: m.getCanvas(), context: gl, antialias: true }); renderer.autoClear = false; } },
   render(gl, matrix) {
     const l = new THREE.Matrix4().makeTranslation(OR.x, OR.y, OR.z).scale(new THREE.Vector3(SC, -SC, SC));
     camera.projectionMatrix = new THREE.Matrix4().fromArray(matrix).multiply(l);
@@ -230,17 +220,15 @@ function refresh() {
 }
 
 /* ---------- Gece / gündüz ---------- */
-function applyMode() {
+function applyLights() {
   bldMat.uniforms.uNight.value = isNight ? 1 : 0;
   amb.color.set(isNight ? 0x8fa3c4 : 0xffffff); amb.intensity = isNight ? 0.3 : 0.75;
   sun.color.set(isNight ? 0xb7c4dc : 0xfff3df); sun.intensity = isNight ? 0.35 : 0.9;
   glowMat.visible = isNight; headMat.color.set(isNight ? 0xffc477 : 0x7a7c7e);
-  map.setLayoutProperty('dark', 'visibility', isNight ? 'visible' : 'none');
-  map.setLayoutProperty('day', 'visibility', isNight ? 'none' : 'visible');
   $('mode').textContent = isNight ? 'Gündüz görünümü' : 'Gece görünümü';
   map.triggerRepaint();
 }
-$('mode').addEventListener('click', () => { isNight = !isNight; applyMode(); });
+$('mode').addEventListener('click', () => { isNight = !isNight; applyLights(); map.setStyle(isNight ? STYLES.dark : STYLES.day); });
 
-map.on('load', () => { map.addLayer(worldLayer); applyMode(); refresh(); });
+map.on('style.load', () => { if (!map.getLayer('world')) map.addLayer(worldLayer); applyLights(); refresh(); });
 map.on('moveend', refresh);
