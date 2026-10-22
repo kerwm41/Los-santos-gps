@@ -1,6 +1,6 @@
 /* Los Santos GPS v0.6 — browser PWA. Requires HTTPS for geolocation. */
 const $=id=>document.getElementById(id);
-const state={map:null,position:null,heading:0,watch:null,destination:null,route:null,routeOptions:[],routeIndex:0,following:false,minimap:false,lastReroute:0};
+const state={map:null,position:null,heading:0,watch:null,destination:null,route:null,routeOptions:[],routeIndex:0,following:false,minimap:false,lastReroute:0,pendingCinema:false};
 const msg=(s)=>{const e=$('toast');e.textContent=s;e.hidden=false;clearTimeout(msg.timer);msg.timer=setTimeout(()=>e.hidden=true,5200)};
 const fmtDist=m=>m<1000?`${Math.round(m)} m`:`${(m/1000).toFixed(1)} km`;
 const fmtTime=s=>s<3600?`${Math.max(1,Math.round(s/60))} dk`:`${Math.floor(s/3600)} sa ${Math.round((s%3600)/60)} dk`;
@@ -8,6 +8,11 @@ const styleURL='https://tiles.openfreemap.org/styles/liberty';
 let compassActive=false, compassHeading=null, lastCompassAt=0;
 const wrapDegrees=n=>(n%360+360)%360;
 function currentHeading(){return compassActive&&compassHeading!==null?compassHeading:state.heading;}
+function applyDayNightTheme(dayFlag=null){
+  const isDay = dayFlag!==null ? !!dayFlag : ((weatherState.data?.current?.is_day===1) || ((new Date()).getHours()>=7 && (new Date()).getHours()<20));
+  document.body.classList.toggle('day-theme',isDay);
+  document.body.classList.toggle('night-theme',!isDay);
+}
 function updateMarkerHeading(){if(playerMarker)playerMarker.setRotation(currentHeading());}
 function handleOrientation(e){
   let h=null;
@@ -100,6 +105,19 @@ function improveStreetLabels(map){
  }
 }
 
+// Vector road labels: OpenMapTiles transportation_name includes street names not present in the default visible layers.
+function addLocalStreetNames(map){
+  const style=map.getStyle();if(!style||map.getLayer('local-street-names'))return;
+  const road=style.layers.find(l=>l['source-layer']==='transportation_name');
+  const source=road?.source||style.layers.find(l=>l['source-layer']==='transportation')?.source;
+  if(!source)return;
+  try{
+    map.addLayer({id:'local-street-names',type:'symbol',source,'source-layer':'transportation_name',minzoom:14,
+      filter:['all',['has','name'],['any',['==',['get','class'],'minor'],['==',['get','class'],'service'],['==',['get','class'],'street'],['==',['get','class'],'tertiary'],['==',['get','class'],'residential'],['==',['get','class'],'path'],['==',['get','class'],'secondary'],['==',['get','class'],'primary']]],
+      layout:{'symbol-placement':'line','symbol-spacing':180,'text-field':['coalesce',['get','name:tr'],['get','name']], 'text-font':['Noto Sans Regular'], 'text-size':['interpolate',['linear'],['zoom'],14,10,17,13,20,15], 'text-max-angle':35,'text-rotation-alignment':'map','text-allow-overlap':false,'text-ignore-placement':false},
+      paint:{'text-color':'#f4f4f6','text-halo-color':'#1a1c23','text-halo-width':1.8,'text-opacity':['interpolate',['linear'],['zoom'],14,0.72,16,1]}});
+  }catch(e){console.warn('Street label source unavailable',e)}
+}
 async function start(){
   const status=$('status');
   if(typeof window.maplibregl==='undefined'){
@@ -113,7 +131,8 @@ async function start(){
     let hasLoaded=false;
     state.map.on('load',()=>{
       hasLoaded=true;
-      try{applyGTATint(state.map);improveStreetLabels(state.map);}catch(e){console.warn('GTA theme unavailable; basic map remains visible',e);}
+      try{applyGTATint(state.map);improveStreetLabels(state.map);addLocalStreetNames(state.map);addWaterDepthBands(state.map);}catch(e){console.warn('GTA theme unavailable; basic map remains visible',e);}
+      ensureZoneLayers(state.map);
       state.map.addSource('route',{type:'geojson',data:emptyGeo()});
       state.map.addLayer({id:'route-halo',type:'line',source:'route',paint:{'line-color':'#2a102e','line-width':12,'line-opacity':.95},layout:{'line-cap':'round','line-join':'round'}});
       state.map.addLayer({id:'route-main',type:'line',source:'route',paint:{'line-color':'#a957e9','line-width':7,'line-opacity':.94},layout:{'line-cap':'round','line-join':'round'}});
@@ -129,8 +148,8 @@ async function start(){
 function emptyGeo(){return{type:'FeatureCollection',features:[]}}
 let playerMarker=null,destMarker=null;
 function locate(){if(!navigator.geolocation){msg('Bu tarayıcıda GPS kullanılamıyor.');return;}
- if(state.watch!==null){state.following=true;if(state.position)state.map?.flyTo({center:state.position,zoom:16});msg('GPS takibi açık.');return;}
- $('status').textContent='GPS BEKLENİYOR';
+ if(state.watch!==null){state.following=true;state.pendingCinema=cinema.auto;if(state.position){state.map?.flyTo({center:state.position,zoom:16});if(state.pendingCinema&&!cinema.busy){state.pendingCinema=false;cinema.played=true;setTimeout(()=>playCinema(cinema.mode),120);}}return;}
+ state.pendingCinema=cinema.auto;$('status').textContent='KONUM ALINIYOR';
  state.watch=navigator.geolocation.watchPosition(p=>{
   const pos=[p.coords.longitude,p.coords.latitude];state.position=pos;state.heading=Number.isFinite(p.coords.heading)?p.coords.heading:state.heading;
   $('speed').innerHTML=`${Math.max(0,Math.round((p.coords.speed||0)*3.6))} <small>km/sa</small>`;
@@ -138,7 +157,7 @@ function locate(){if(!navigator.geolocation){msg('Bu tarayıcıda GPS kullanıla
   if(!playerMarker){const el=document.createElement('div');el.className='player';playerMarker=new maplibregl.Marker({element:el,rotationAlignment:'map'}).setLngLat(pos).addTo(state.map);}else playerMarker.setLngLat(pos);
   if(playerMarker)updateMarkerHeading();
   if(state.following)state.map.easeTo({center:pos,zoom:state.minimap?17:16,bearing:currentHeading(),pitch:state.minimap?35:0,duration:650});
-  if(cinema.auto&&!cinema.played&&state.map?.isStyleLoaded()){cinema.played=true;setTimeout(()=>playCinema(cinema.mode),120);}
+  if(state.pendingCinema&&state.map?.isStyleLoaded()&&!cinema.busy){state.pendingCinema=false;cinema.played=true;setTimeout(()=>playCinema(cinema.mode),180);}
   if(state.destination&&!state.route)calculateRoute();
   if(state.route&&state.following)updateGuidance(pos);
  },err=>{console.error(err);$('status').textContent='GPS İZNİ GEREKLİ';msg('Konum alınamadı: Safari ayarlarında konum izni ver ve HTTPS kullan.');},{enableHighAccuracy:true,maximumAge:1500,timeout:16000});
@@ -284,7 +303,7 @@ async function updateWeather(force=false){
   let resp;try{resp=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(5)}&longitude=${lon.toFixed(5)}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,cloud_cover,precipitation,wind_speed_10m,is_day&hourly=temperature_2m,precipitation_probability,weather_code&forecast_days=1&timezone=auto`,{signal:controller.signal});}finally{clearTimeout(t)}
   if(!resp.ok)throw new Error('Weather HTTP '+resp.status);
   const data=await resp.json();weatherState.data=data;weatherState.updated=Date.now();weatherState.coordinate=[...p];
-  $('weatherIcon').textContent=weatherSymbol(data.current?.weather_code,data.current?.is_day===1);$('weatherTemp').textContent=Math.round(data.current?.temperature_2m??0)+'°';return data;
+  $('weatherIcon').textContent=weatherSymbol(data.current?.weather_code,data.current?.is_day===1);$('weatherTemp').textContent=Math.round(data.current?.temperature_2m??0)+'°';applyDayNightTheme(data.current?.is_day===1);return data;
  }catch(e){console.warn('Weather unavailable',e);$('weatherTemp').textContent='—°';return weatherState.data;}
 }
 $('weatherChip').onclick=async()=>{
@@ -306,13 +325,34 @@ $('travelChip').onclick=()=>{
  <div class="sheet-row"><span>🚆 Trenle</span><strong>Sefer verisi yok</strong></div></div>
  <p class="sheet-muted">*Yürüyüş yalnızca kuş uçuşu uzaklıktan yaklaşık tahmindir, gerçek yürüme rotası değildir. Araç süresi OSRM rotasından gelir; canlı trafik içermez. Otobüs/tren için güvenilir tarife entegrasyonu henüz yok.</p>`);
 };
-function poiClass(tags){if(tags.historic||tags.tourism==='museum'||tags.tourism==='attraction'||tags.tourism==='viewpoint')return ['🏛','Tarihi / turistik yer'];if(tags.amenity==='restaurant')return ['🍽','Restoran'];if(tags.amenity==='cafe')return ['☕','Kafe'];if(tags.amenity==='pharmacy')return ['✚','Eczane'];if(tags.amenity==='hospital')return ['🏥','Hastane'];if(tags.amenity==='school')return ['🎓','Okul'];if(tags.shop)return ['🛒','Mağaza'];return ['📍','Mekân'];}
+function poiClass(t){
+ const a=t.amenity||'', shop=t.shop||'', tourism=t.tourism||'';
+ if(['hospital','clinic','doctors','dentist','pharmacy'].includes(a)||t.healthcare)return ['✚',a==='pharmacy'?'Eczane':'Sağlık','health'];
+ if(['restaurant','fast_food','food_court'].includes(a))return ['🍴','Restoran','food'];
+ if(['cafe','bar','pub','ice_cream'].includes(a))return ['☕','Kafe / içecek','food'];
+ if(a==='library')return ['▤','Kütüphane','culture'];
+ if(['school','university','college','kindergarten'].includes(a))return ['▣','Eğitim','culture'];
+ if(t.historic||['museum','attraction','viewpoint','gallery'].includes(tourism))return ['◆','Tarihî / turistik','nature'];
+ if(['park','nature_reserve'].includes(t.leisure)||['wood','peak','waterfall','beach'].includes(t.natural)||t.landuse==='forest')return ['♣','Doğa','nature'];
+ if(['supermarket','convenience','bakery','mall'].includes(shop))return ['▦','Market / mağaza','shopping'];
+ if(a==='fuel'||a==='parking')return ['▰','Ulaşım','travel'];
+ if(shop)return ['▦','Mağaza','shopping'];
+ return ['●','Mekân','other'];
+}
+function safeExternal(value){try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)?u.href:null}catch{return null}}
+function statusHours(raw){
+ if(!raw)return 'Çalışma saati paylaşılmamış';
+ if(raw==='24/7')return '24 saat açık';
+ return 'Çalışma saatleri: '+raw;
+}
 async function showPOI(item){
  const t=item.tags||{},name=t['name:tr']||t.name||'İsimsiz mekân',category=poiClass(t)[1];
  const details=[t['addr:street'],t['addr:housenumber'],t['addr:city']].filter(Boolean).join(' ');
- const links=[];if(t.website||t['contact:website']){let url=t.website||t['contact:website'];if(/^https?:\/\//i.test(url))links.push(`<a class="sheet-link" href="${escapeHTML(url)}" target="_blank" rel="noopener">Resmî site ↗</a>`);}
+ const links=[];if(t.website||t['contact:website']){const url=safeExternal(t.website||t['contact:website']);if(url)links.push(`<a class="sheet-link" href="${escapeHTML(url)}" target="_blank" rel="noopener">Resmî site ↗</a>`);}
  if(t.phone||t['contact:phone']){const phone=t.phone||t['contact:phone'];links.push(`<a class="sheet-link" href="tel:${escapeHTML(phone.replace(/[^+\d]/g,''))}">${escapeHTML(phone)}</a>`);}
- let base=`<p class="sheet-muted">${escapeHTML(category)}</p>${details?`<p>${escapeHTML(details)}</p>`:''}${t.opening_hours?`<p>🕒 ${escapeHTML(t.opening_hours)}</p>`:''}${t.description?`<p>${escapeHTML(t.description)}</p>`:''}${links.length?`<p>${links.join(' · ')}</p>`:''}<p class="sheet-muted">OpenStreetMap topluluk verisi · bilgiler güncel olmayabilir.</p><button class="sheet-action" id="poiGo">📍 Buraya rota oluştur</button>`;
+ const menu=safeExternal(t['website:menu']||t['menu:website']||t['menu:url']||t.menu||'');if(menu)links.push(`<a class="sheet-link" href="${escapeHTML(menu)}" target="_blank" rel="noopener">Menüyü görüntüle ↗</a>`);
+ const cover=safeExternal(t.image||'');const image=cover?`<img class="sheet-img" src="${escapeHTML(cover)}" loading="lazy" alt="${escapeHTML(name)}">`:'';
+ let base=`${image}<p class="sheet-muted">${escapeHTML(category)}</p>${details?`<p>${escapeHTML(details)}</p>`:''}<p>🕒 ${escapeHTML(statusHours(t.opening_hours))}</p>${t.description?`<p>${escapeHTML(t.description)}</p>`:''}${links.length?`<p>${links.join(' · ')}</p>`:''}<p class="sheet-muted">Açık/kapalı durumu doğrulanmadı. OpenStreetMap bilgileri eksik veya eski olabilir.</p><button class="sheet-action" id="poiGo">📍 Buraya rota oluştur</button>`;
  sheet(name,base);$('poiGo').onclick=()=>{setDestination(item.lon??item.center?.lon,item.lat??item.center?.lat,name);closeSheet();};
  const wiki=t.wikipedia;if(!wiki||!/^([a-z-]+):(.+)$/.test(wiki))return;
  const language=wiki.split(':')[0],title=wiki.slice(language.length+1);
@@ -328,10 +368,78 @@ async function loadNearbyPOIs(){
  if(!state.map||state.map.getZoom()<13){clearPOIs();return;}
  if(Date.now()-lastNearbyFetch<16000)return;lastNearbyFetch=Date.now();
  const c=state.map.getCenter();if(nearbyController)nearbyController.abort();nearbyController=new AbortController();
- const q=`[out:json][timeout:12];(nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[amenity~"^(restaurant|cafe|pharmacy|hospital|school)$"];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[historic];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[tourism~"^(museum|attraction|viewpoint)$"];);out center 65;`;
+ const q=`[out:json][timeout:12];(nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[amenity~"^(restaurant|cafe|fast_food|pharmacy|hospital|clinic|doctors|dentist|library|school|university|college|fuel|parking|bank|atm)$"];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[shop~"^(supermarket|convenience|bakery|mall|clothes|books)$"];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[historic];nwr(around:1100,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[tourism~"^(museum|attraction|viewpoint|gallery)$"];);out center 90;`;
  try{const resp=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',body:q,signal:nearbyController.signal});if(!resp.ok)throw Error('Overpass '+resp.status);const data=await resp.json();if(!state.map||state.map.getZoom()<13)return;clearPOIs();
-  for(const item of (data.elements||[]).slice(0,55)){const lng=item.lon??item.center?.lon,lat=item.lat??item.center?.lat;if(!Number.isFinite(lng)||!Number.isFinite(lat))continue;const el=document.createElement('button');el.className='poi-marker';const [icon,category]=poiClass(item.tags||{});el.textContent=icon;el.type='button';el.title=item.tags?.name||category;el.setAttribute('aria-label',el.title);el.onclick=e=>{e.stopPropagation();showPOI(item);};poiMarkers.push(new maplibregl.Marker({element:el,anchor:'center'}).setLngLat([lng,lat]).addTo(state.map));}
+  for(const item of (data.elements||[]).slice(0,65)){const lng=item.lon??item.center?.lon,lat=item.lat??item.center?.lat;if(!Number.isFinite(lng)||!Number.isFinite(lat))continue;const el=document.createElement('button');el.className='poi-marker';const [icon,category,colorClass]=poiClass(item.tags||{});el.classList.add("poi-"+colorClass);el.textContent=icon;el.type='button';el.title=item.tags?.name||category;el.setAttribute('aria-label',el.title);el.onclick=e=>{e.stopPropagation();showPOI(item);};poiMarkers.push(new maplibregl.Marker({element:el,anchor:'center'}).setLngLat([lng,lat]).addTo(state.map));}
  }catch(e){if(e.name!=='AbortError')console.warn('POI data temporarily unavailable',e);}
 }
+
+
+/* v1.1 — auto cinema fix, layered water, restricted zones, forest markers, traffic status */
+let forestMarkers=[]; let restrictedController=null, forestController=null;
+function addWaterDepthBands(map){
+  if(map.getLayer('water-depth-band-1')) return;
+  const layers=map.getStyle()?.layers||[];
+  const base=layers.find(l=>l.source && l.type==='fill' && /water/.test(((l['source-layer']||'')+' '+l.id).toLowerCase()));
+  if(!base) return;
+  const src=base.source, srcLayer=base['source-layer'];
+  const defs=[
+    ['water-depth-band-1','#8ec5e8',['interpolate',['linear'],['zoom'],7,0,10,0.05,13,0.12,16,0.18],['interpolate',['linear'],['zoom'],7,0.5,10,1.6,13,4.5,16,10]],
+    ['water-depth-band-2','#5fa1cc',['interpolate',['linear'],['zoom'],7,0,10,0.07,13,0.18,16,0.28],['interpolate',['linear'],['zoom'],7,0.5,10,2.6,13,7,16,16]],
+    ['water-depth-band-3','#33698e',['interpolate',['linear'],['zoom'],7,0,10,0.10,13,0.22,16,0.34],['interpolate',['linear'],['zoom'],7,0.5,10,4,13,10,16,24]],
+    ['water-depth-band-4','#23384e',['interpolate',['linear'],['zoom'],7,0,10,0.08,13,0.18,16,0.28],['interpolate',['linear'],['zoom'],7,0.5,10,6,13,14,16,34]],
+  ];
+  for(const [id,color,opacity,width] of defs){
+    try{map.addLayer({id,type:'line',source:src,'source-layer':srcLayer,paint:{'line-color':color,'line-opacity':opacity,'line-width':width}}, base.id);}catch(err){console.warn('water band',id,err)}
+  }
+}
+function ensureZoneLayers(map){
+  if(!map.getSource('restricted-zones')){
+    map.addSource('restricted-zones',{type:'geojson',data:emptyGeo()});
+    map.addLayer({id:'restricted-fill',type:'fill',source:'restricted-zones',paint:{'fill-color':'#d91f33','fill-opacity':0.18}});
+    map.addLayer({id:'restricted-line',type:'line',source:'restricted-zones',paint:{'line-color':'#ff4d5f','line-width':['interpolate',['linear'],['zoom'],9,1,13,2.5,16,4],'line-opacity':0.82}});
+  }
+}
+function wayGeomToFeature(geom,props={}){
+  if(!geom || geom.length<3) return null;
+  const coords=geom.map(p=>[p.lon,p.lat]);
+  const first=coords[0], last=coords[coords.length-1];
+  if(first[0]!==last[0] || first[1]!==last[1]) coords.push([...first]);
+  return {type:'Feature',properties:props,geometry:{type:'Polygon',coordinates:[coords]}};
+}
+async function loadRestrictedZones(){
+  if(!state.map || state.map.getZoom()<11 || !state.map.getSource('restricted-zones')) return;
+  const c=state.map.getCenter();
+  if(restrictedController) restrictedController.abort();
+  restrictedController=new AbortController();
+  const query=`[out:json][timeout:18];(way(around:4200,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[landuse=military];way(around:4200,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[military];);out geom 80;`;
+  try{
+    const resp=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',body:query,signal:restrictedController.signal});
+    if(!resp.ok) throw new Error('restricted '+resp.status);
+    const data=await resp.json();
+    const features=(data.elements||[]).map(el=>wayGeomToFeature(el.geometry,{name:el.tags?.name||'Yasak alan'})).filter(Boolean);
+    state.map.getSource('restricted-zones').setData({type:'FeatureCollection',features});
+  }catch(err){ if(err.name!=='AbortError') console.warn('Restricted zones unavailable',err); }
+}
+function clearForestMarkers(){ for(const m of forestMarkers) m.remove(); forestMarkers=[]; }
+async function loadForestMarkers(){
+  if(!state.map || state.map.getZoom()<12){ clearForestMarkers(); return; }
+  const c=state.map.getCenter();
+  if(forestController) forestController.abort();
+  forestController=new AbortController();
+  const query=`[out:json][timeout:16];(way(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[natural=wood];way(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[landuse=forest];relation(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[natural=wood];relation(around:2600,${c.lat.toFixed(5)},${c.lng.toFixed(5)})[landuse=forest];);out center 24;`;
+  try{
+    const resp=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',body:query,signal:forestController.signal});
+    if(!resp.ok) throw new Error('forest '+resp.status);
+    const data=await resp.json();
+    clearForestMarkers();
+    for(const item of (data.elements||[]).slice(0,22)){
+      const lng=item.center?.lon||item.lon, lat=item.center?.lat||item.lat; if(!Number.isFinite(lng)||!Number.isFinite(lat)) continue;
+      const el=document.createElement('div'); el.className='tree-marker'; el.textContent='🌲'; el.setAttribute('aria-label','Ağaçlık alan');
+      forestMarkers.push(new maplibregl.Marker({element:el,anchor:'center'}).setLngLat([lng,lat]).addTo(state.map));
+    }
+  }catch(err){ if(err.name!=='AbortError') console.warn('Forest markers unavailable',err); }
+}
+
 // Wait for asynchronous map startup without blocking map rendering.
-(function initDiscover(){let tries=0;const timer=setInterval(()=>{tries++;if(state.map?.isStyleLoaded()){clearInterval(timer);state.map.on('moveend',loadNearbyPOIs);loadNearbyPOIs();updateWeather();}else if(tries>35)clearInterval(timer);},700);})();
+(function initDiscover(){let tries=0;const timer=setInterval(()=>{tries++;if(state.map?.isStyleLoaded()){clearInterval(timer);applyDayNightTheme();state.map.on('moveend',()=>{loadNearbyPOIs();loadRestrictedZones();loadForestMarkers();});loadNearbyPOIs();loadRestrictedZones();loadForestMarkers();updateWeather().then(()=>applyDayNightTheme());}else if(tries>35)clearInterval(timer);},700);})();

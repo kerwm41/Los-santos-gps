@@ -94,3 +94,16 @@ body.cinema-running .top,body.cinema-running .searchbox,body.cinema-running .too
 .sheet-content{padding:3px 17px 20px;overflow:auto;max-height:calc(67dvh - 70px);font-size:14px;line-height:1.5}.sheet-content p{margin:6px 0 13px;color:#e8ebf0ce}.sheet-content small,.sheet-muted{font-size:12px;color:#c7ccd5}.sheet-content h3{margin:15px 0 8px;font-size:13px}.sheet-list{display:grid;gap:11px}.sheet-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #ffffff15}.sheet-row>span:first-child{display:flex;align-items:center;gap:9px}.sheet-row strong{font-size:14px}.sheet-pill{display:inline-block;background:#ffffff13;border-radius:12px;padding:7px 9px;margin:4px 4px 4px 0}.sheet-action{border:0;border-radius:14px;padding:12px 14px;background:rgba(154,102,209,.60);color:white;font-weight:700;margin-top:10px;width:100%;font-size:13px}.sheet-link{color:#d2b5ff;text-decoration:underline;text-underline-offset:3px}.sheet-img{display:block;width:100%;max-height:190px;object-fit:cover;border-radius:13px;margin:9px 0}.poi-marker{width:24px;height:24px;border-radius:50%;border:1px solid #ffffff44;background:rgba(35,41,47,.83);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:grid;place-items:center;font-size:13px;box-shadow:0 2px 8px #0005;cursor:pointer}.poi-marker:active{transform:scale(.92)}
 body.cinema-running .quick-widgets{opacity:0;pointer-events:none}
 @media(max-width:380px){.quick-widgets{top:calc(env(safe-area-inset-top) + 114px)}.mini-widget{min-height:35px}}
+
+
+/* v1.1 extras */
+body.day-theme .vignette{background:radial-gradient(ellipse at 50% 48%,transparent 57%,rgba(122,146,170,.10) 100%)}
+body.day-theme .top{background:linear-gradient(180deg,rgba(205,219,235,.22),rgba(90,112,132,.08) 48%,transparent)}
+body.night-theme .top{background:linear-gradient(180deg,rgba(5,8,14,.72),rgba(8,10,14,.26) 48%,transparent)}
+body.night-theme .hud{background:linear-gradient(0deg,rgba(4,7,12,.78),rgba(7,10,14,.30) 48%,transparent 100%)}
+.tree-marker{width:26px;height:26px;display:grid;place-items:center;font-size:17px;filter:drop-shadow(0 3px 3px rgba(0,0,0,.55));text-shadow:0 1px 0 rgba(255,255,255,.25);transform:translateZ(0)}
+.tools button#trafficBtn{font-size:20px;letter-spacing:-2px}
+
+/* v1.2 distinct category markers */
+.poi-marker{width:30px;height:30px;font-size:17px;color:white;border:1px solid rgba(255,255,255,.35);box-shadow:0 2px 10px rgba(0,0,0,.48);font-weight:700}
+.poi-health{background:rgba(190,48,61,.93)}.poi-food{background:rgba(220,115,39,.94)}.poi-culture{background:rgba(83,106,193,.94)}.poi-nature{background:rgba(42,126,72,.94)}.poi-shopping{background:rgba(165,91,178,.94)}.poi-travel{background:rgba(55,137,155,.94)}.poi-other{background:rgba(70,77,88,.93)}
